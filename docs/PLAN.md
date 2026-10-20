@@ -11,7 +11,9 @@ Roles: opencode running `opencode-go/deepseek-v4.1-flash` implements; Claude Cod
    - re-runs `npm run typecheck`, `npm run lint`, `npm test`
    - reads the diff against the spec sections for that phase and the pitfalls in section 10
    - opens the app in a real browser (Chrome DevTools MCP) and checks the phase's acceptance criteria, console errors and visual quality against `docs/spec/reference-screenshots/`
-4. Findings go back to the same opencode session (`--session`) as a numbered fix list.
+4. Findings go back to opencode as a self-contained numbered fix list in `docs/briefs/phase-N-fixes.md`, run in a fresh session.
+   Do not use `opencode run --session <id>`: on opencode v2.0.26 it hangs with no output (seen twice on 2026-10-20).
+   Launch every run with `nohup ... --format json > .opencode-logs/<name>.jsonl < /dev/null &` so it survives the reviewer's session.
 5. Repeat 3-4 until the gate is clean, then the reviewer commits `feat: phase N - <name>` on branch `phase-N-<name>` and pushes it.
 6. Reviewer opens a PR to `main` and runs an independent review agent on it (code-reviewer, plus typescript-reviewer or security-reviewer where relevant).
 7. Real findings from that review go back to opencode, get fixed, re-gated and pushed to the same PR.
