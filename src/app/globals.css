@@ -333,41 +333,6 @@
     background: var(--color-signal);
     box-shadow: 0 0 0 1px rgba(124, 196, 214, 0.45);
   }
-
-  .world-placeholder {
-    background:
-      radial-gradient(
-        1100px 620px at 38% 8%,
-        rgba(52, 92, 122, 0.28),
-        transparent 62%
-      ),
-      radial-gradient(
-        900px 700px at 78% 82%,
-        rgba(64, 78, 130, 0.2),
-        transparent 65%
-      ),
-      linear-gradient(180deg, #08101a 0%, #06080c 62%, #04060a 100%);
-  }
-
-  .world-placeholder::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background-image:
-      linear-gradient(rgba(124, 196, 214, 0.045) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(124, 196, 214, 0.045) 1px, transparent 1px);
-    background-size: 80px 80px;
-    mask-image: radial-gradient(
-      ellipse at 50% 42%,
-      #000000 8%,
-      transparent 72%
-    );
-    -webkit-mask-image: radial-gradient(
-      ellipse at 50% 42%,
-      #000000 8%,
-      transparent 72%
-    );
-  }
 }
 
 @keyframes aaw-pulse {
