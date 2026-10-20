@@ -89,6 +89,7 @@ export class SimulationEngine {
   private taskSeq = 0;
   private linkSeq = 0;
   private eventSeq = 0;
+  private resetSeq = 0;
 
   constructor(seed: number = SIMULATION_CONFIG.seed) {
     this.seed = seed;
@@ -167,11 +168,21 @@ export class SimulationEngine {
     this.controllers.clear();
     this.buildAgents();
 
-    this.emit("system.reset", "Simulation reset - six agents idle", {
+    // The reset event closes the previous run. It lives in its own id
+    // namespace because the next run restarts at evt-0001 below; emitting it
+    // from the run sequence would put evt-0001 (reset) next to evt-0001
+    // (system.started) after a back-to-back reset, and event ids are keys.
+    this.resetSeq += 1;
+    this.events.publish({
+      id: `evt-reset-${this.resetSeq}`,
+      timestamp: Date.now(),
+      simTime: roundClock(this.clock),
+      type: "system.reset",
+      message: "Simulation reset - six agents idle",
       severity: "info",
+      feed: true,
     });
-    // The next run starts at evt-0001, exactly like a fresh engine. The reset
-    // event that closes the previous run keeps its old id.
+    // The next run starts at evt-0001, exactly like a fresh engine.
     this.eventSeq = 0;
     this.publishSnapshot();
   }
@@ -445,6 +456,11 @@ export class SimulationEngine {
     task.updatedAt = roundClock(this.clock);
   }
 
+  /**
+   * Task cards are monotonic: a rework restarts the implementation progress
+   * ratio at 0, but a card that was already checked stays checked. Rework
+   * never un-ticking a card is a product invariant (and a UI review finding).
+   */
   private tickSubtasks(taskId: string, ratio: number): void {
     const task = this.tasks.get(taskId);
     if (!task || task.subtasks.length === 0) return;
@@ -452,7 +468,7 @@ export class SimulationEngine {
     const doneCount = Math.min(count, Math.floor(ratio * count + 1e-9));
     let changed = false;
     const subtasks = task.subtasks.map((subtask, index) => {
-      const done = index < doneCount;
+      const done = subtask.done || index < doneCount;
       if (done !== subtask.done) changed = true;
       return done === subtask.done ? subtask : { ...subtask, done };
     });
