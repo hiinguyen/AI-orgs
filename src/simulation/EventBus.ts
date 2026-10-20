@@ -24,14 +24,6 @@ export class EventBus<T> {
       }
     }
   }
-
-  clear(): void {
-    this.listeners.clear();
-  }
-
-  get size(): number {
-    return this.listeners.size;
-  }
 }
 
 /**

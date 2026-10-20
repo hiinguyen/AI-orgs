@@ -139,10 +139,6 @@ export class AgentController {
       options.clock() + this.ambientGap();
   }
 
-  get id(): AgentId {
-    return this.profile.id;
-  }
-
   enqueue(actions: readonly AgentAction[], options?: { ambient?: boolean }): void {
     for (const action of actions) {
       if (options?.ambient) action.ambient = true;

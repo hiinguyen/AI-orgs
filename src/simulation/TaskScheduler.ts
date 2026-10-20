@@ -19,10 +19,6 @@ export class TaskScheduler {
     ).length;
   }
 
-  queuedCount(tasks: readonly Task[]): number {
-    return tasks.filter((task) => task.phase === "queued").length;
-  }
-
   canPick(tasks: readonly Task[]): boolean {
     return this.activeCount(tasks) < this.maxConcurrentTasks;
   }

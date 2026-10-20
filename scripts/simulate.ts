@@ -9,11 +9,13 @@ import { SimulationEngine } from "../src/simulation/SimulationEngine.ts";
 import { TICK_SECONDS } from "../src/simulation/simulationConfig.ts";
 import { applySignal, canTransition, isTerminal } from "../src/simulation/WorkflowStateMachine.ts";
 import { GENERIC_TEMPLATE, matchWorkTemplate } from "../src/simulation/workContent.ts";
-import { AGENTS } from "../src/agents/AgentRegistry.ts";
+import { AGENTS, agentName } from "../src/agents/AgentRegistry.ts";
 import { slotFor } from "../src/simulation/worldLayout.ts";
 import { DEMO_TASK } from "../src/tasks/taskActions.ts";
 import { SPRINT_TASKS, TASK_BACKLOG } from "../src/tasks/taskBacklog.ts";
-import { isTerminalPhase } from "../src/tasks/taskTypes.ts";
+import { PHASE_STATUS, isTerminalPhase } from "../src/tasks/taskTypes.ts";
+import type { WorkflowPhase } from "../src/tasks/taskTypes.ts";
+import type { AgentId } from "../src/agents/agentTypes.ts";
 import type { AgentEvent } from "../src/events/eventTypes.ts";
 import type { CreateTaskInput, Task } from "../src/tasks/taskTypes.ts";
 
@@ -84,6 +86,31 @@ function deterministicInput(
     script: { qaFailsOn: [], reviewChangesOn: [] },
   };
 }
+
+/** Everything deterministic in an event, excluding the wall-clock timestamp. */
+function eventSignature(event: AgentEvent): string {
+  return [
+    event.id,
+    event.type,
+    event.simTime,
+    event.message,
+    event.agentId ?? "",
+    event.targetAgentId ?? "",
+    event.taskId ?? "",
+  ].join("|");
+}
+
+const PAUSED_OWNER_CASES: readonly {
+  owner: AgentId;
+  phase: WorkflowPhase;
+  previous: WorkflowPhase;
+}[] = [
+  { owner: "piper", phase: "planning", previous: "intake" },
+  { owner: "iris", phase: "research", previous: "planning" },
+  { owner: "kai", phase: "implementation", previous: "research" },
+  { owner: "quinn", phase: "testing", previous: "implementation" },
+  { owner: "rex", phase: "review", previous: "testing" },
+];
 
 const DEMO_PHASES = [
   "queued",
@@ -270,6 +297,22 @@ function main(): void {
       demo.task.history.map((entry) => entry.to).join(">"),
   );
 
+  const demoSignatures = demo.events.map(eventSignature);
+  const repeatSignatures = repeat.events.map(eventSignature);
+  const firstDifferent = demoSignatures.findIndex(
+    (signature, index) => signature !== repeatSignatures[index],
+  );
+  const streamsMatch =
+    demoSignatures.length === repeatSignatures.length &&
+    firstDifferent === -1;
+  check(
+    "two fresh runs emit the same event stream",
+    streamsMatch,
+    firstDifferent === -1
+      ? `${demoSignatures.length} vs ${repeatSignatures.length} events`
+      : `event ${firstDifferent + 1}: ${demoSignatures[firstDifferent]} vs ${repeatSignatures[firstDifferent]}`,
+  );
+
   // ---------------------------------------------------------------- group 4
   group("4. Pause, resume, blocked agents, reset");
   {
@@ -279,7 +322,13 @@ function main(): void {
       deterministicInput("Stripe checkout retry handling", "high"),
     );
 
-    for (let index = 0; index < 60; index += 1) engine.tick(TICK_SECONDS);
+    const walking = tickUntil(
+      engine,
+      () =>
+        engine.snapshot().agents.some((agent) => agent.status === "walking"),
+      20,
+    );
+    check("an agent is walking before the pause", walking);
     engine.pause();
     const beforePause = engine.snapshot();
     engine.tick(1);
@@ -328,9 +377,12 @@ function main(): void {
         blocked.blockedReason ?? "",
       );
       engine.resumeAgent(owned.assignedAgentId);
+      const resumed = taskById(engine, created.id);
       check(
-        "resuming the owner unblocks the task",
-        taskById(engine, created.id).status !== "blocked",
+        "resuming the owner restores the phase projection",
+        resumed.status === PHASE_STATUS[resumed.phase] &&
+          resumed.blockedReason === null,
+        `${resumed.status} vs ${PHASE_STATUS[resumed.phase]}`,
       );
     }
 
@@ -374,6 +426,178 @@ function main(): void {
           Math.abs(agent.position.z - slot.z) < 1e-6
         );
       }),
+    );
+  }
+
+  for (const entry of PAUSED_OWNER_CASES) {
+    const { engine, events } = harness();
+    engine.start();
+    const created = engine.submitTask(DEMO_TASK);
+    const owner = agentName(entry.owner);
+    const reachedPrevious = tickUntil(
+      engine,
+      () => taskById(engine, created.id).phase === entry.previous,
+      120,
+    );
+    engine.pauseAgent(entry.owner);
+    const marker = events.length;
+
+    const entered = tickUntil(
+      engine,
+      () => taskById(engine, created.id).phase === entry.phase,
+      120,
+    );
+    const blocked = taskById(engine, created.id);
+    check(
+      `paused ${owner}: entering ${entry.phase} is blocked`,
+      reachedPrevious &&
+        entered &&
+        blocked.status === "blocked" &&
+        blocked.blockedReason === `${owner} is paused`,
+      `${blocked.status} - ${blocked.blockedReason ?? "no reason"}`,
+    );
+    check(
+      `paused ${owner}: task.blocked fires on phase entry`,
+      events.slice(marker).some(
+        (event) =>
+          event.type === "task.blocked" &&
+          event.taskId === created.id &&
+          event.metadata?.reason === `${owner} is paused`,
+      ),
+    );
+
+    engine.resumeAgent(entry.owner);
+    const resumed = taskById(engine, created.id);
+    check(
+      `paused ${owner}: resuming restores the ${entry.phase} projection`,
+      resumed.status === PHASE_STATUS[resumed.phase] &&
+        resumed.blockedReason === null &&
+        events
+          .slice(marker)
+          .some(
+            (event) =>
+              event.type === "task.unblocked" && event.taskId === created.id,
+          ),
+      `${resumed.status} vs ${PHASE_STATUS[resumed.phase]}`,
+    );
+
+    const finished = tickUntil(
+      engine,
+      () => isTerminalPhase(taskById(engine, created.id).phase),
+      250,
+    );
+    const final = taskById(engine, created.id);
+    check(
+      `paused ${owner}: the task still completes`,
+      finished && final.phase === "done" && final.iteration === 2,
+      `${final.phase} i${final.iteration}`,
+    );
+  }
+
+  {
+    const { engine } = harness();
+    engine.emitBootEvents();
+    engine.start();
+    engine.setSpeed(2);
+    engine.submitTask(
+      deterministicInput("Add rate limiting to public endpoints", "high"),
+    );
+    engine.submitTask(
+      deterministicInput("Build a weekly uptime dashboard", "medium"),
+    );
+    const twoInFlight = tickUntil(
+      engine,
+      () =>
+        engine
+          .snapshot()
+          .tasks.filter(
+            (task) =>
+              task.phase !== "queued" && !isTerminalPhase(task.phase),
+          ).length === 2,
+      40,
+    );
+    engine.pauseAgent("quinn");
+    check(
+      "reset scenario has two tasks in flight and a paused agent",
+      twoInFlight &&
+        engine.snapshot().agents.find((agent) => agent.id === "quinn")
+          ?.paused === true,
+    );
+
+    engine.reset();
+    const reset = engine.snapshot();
+    check("mid-flight reset clears every task", reset.tasks.length === 0);
+    check(
+      "mid-flight reset returns to ready at clock 0",
+      reset.status === "ready" && reset.clock === 0,
+      `${reset.status} at ${reset.clock}`,
+    );
+    check(
+      "mid-flight reset puts every agent idle, unpaused and at its home slot",
+      reset.agents.every((agent) => {
+        const profile = AGENTS.find((entry) => entry.id === agent.id);
+        if (!profile) return false;
+        const slot = slotFor(profile.home, profile.seat);
+        return (
+          agent.status === "idle" &&
+          !agent.paused &&
+          agent.location === profile.home &&
+          Math.abs(agent.position.x - slot.x) < 1e-6 &&
+          Math.abs(agent.position.z - slot.z) < 1e-6
+        );
+      }),
+    );
+    check(
+      "reset keeps the user's current speed",
+      reset.speed === 2,
+      `${reset.speed}`,
+    );
+
+    engine.start();
+    const next = engine.submitTask(
+      deterministicInput("Add audit logging to admin actions", "high"),
+    );
+    check("a post-reset task gets id T-001", next.id === "T-001", next.id);
+    const nextDone = tickUntil(
+      engine,
+      () => {
+        const task = engine.getTask(next.id);
+        return task !== null && isTerminalPhase(task.phase);
+      },
+      300,
+    );
+    check("a post-reset task still completes", nextDone);
+  }
+
+  {
+    const { engine, events } = harness();
+    engine.emitBootEvents();
+    engine.start();
+    engine.submitTask(deterministicInput("Reset event id probe", "medium"));
+    for (let index = 0; index < 120; index += 1) engine.tick(TICK_SECONDS);
+    engine.reset();
+    const afterReset = events.length;
+    engine.emitBootEvents();
+    engine.start();
+    engine.submitTask(deterministicInput("Reset event id probe", "medium"));
+    for (let index = 0; index < 120; index += 1) engine.tick(TICK_SECONDS);
+    const resetIds = events.slice(afterReset).map((event) => event.id);
+
+    const { engine: fresh, events: freshEvents } = harness();
+    fresh.emitBootEvents();
+    fresh.start();
+    fresh.submitTask(deterministicInput("Reset event id probe", "medium"));
+    for (let index = 0; index < 120; index += 1) fresh.tick(TICK_SECONDS);
+    const freshIds = freshEvents.map((event) => event.id);
+    const idsMatch =
+      resetIds.length === freshIds.length &&
+      resetIds.every((id, index) => id === freshIds[index]);
+    check(
+      "reset restarts event ids like a fresh engine",
+      idsMatch,
+      idsMatch
+        ? undefined
+        : `${resetIds[0] ?? "none"} vs ${freshIds[0] ?? "none"} (${resetIds.length} vs ${freshIds.length})`,
     );
   }
 
@@ -423,9 +647,22 @@ function main(): void {
         (id) => taskById(engine, id).phase === "done",
       ),
     );
+    const finishedLow = taskById(engine, low.id);
+    const finishedMedium = taskById(engine, medium.id);
+    const finishedCritical = taskById(engine, critical.id);
+    const firstSlotFreedAt = Math.min(
+      finishedMedium.completedAt ?? Infinity,
+      finishedCritical.completedAt ?? Infinity,
+    );
+    const lowFirstTransition = finishedLow.history[0];
     check(
       "low starts after a slot frees up",
-      taskById(engine, low.id).iteration === 1,
+      lowFirstTransition !== undefined &&
+        Number.isFinite(firstSlotFreedAt) &&
+        lowFirstTransition.at >= firstSlotFreedAt,
+      lowFirstTransition
+        ? `low at ${lowFirstTransition.at}, slot freed at ${firstSlotFreedAt}`
+        : "low never started",
     );
   }
 

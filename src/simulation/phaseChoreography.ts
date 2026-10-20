@@ -28,6 +28,32 @@ export interface TaskMeta {
   template: WorkTemplate;
 }
 
+/** One side of a testing/review outcome: emote, handoff talk, message, event. */
+interface OutcomeHandoff {
+  activity: string;
+  target: AgentId;
+  talk: string;
+  message: string;
+  eventType:
+    | "qa.failed"
+    | "qa.passed"
+    | "review.changes_requested"
+    | "review.approved";
+  eventMessage: string;
+  metadata: Record<string, unknown>;
+  severity: "warning" | "success";
+}
+
+interface PhaseOutcome {
+  agentId: AgentId;
+  taskId: string;
+  failed: boolean;
+  failSignal: "tests_failed" | "changes_requested";
+  passSignal: "tests_passed" | "approved";
+  fail: OutcomeHandoff;
+  pass: OutcomeHandoff;
+}
+
 function iterationLabel(count: number): string {
   return `${count} ${count === 1 ? "iteration" : "iterations"}`;
 }
@@ -401,96 +427,39 @@ export class PhaseChoreography {
 
   private decideTesting(taskId: string, iteration: number): void {
     const task = this.ctx.getTask(taskId);
-    const controller = this.ctx.getController("quinn");
     const meta = this.ctx.getMeta(taskId);
-    if (!task || !controller || !meta) return;
-    const durations = this.ctx.config.durations;
+    if (!task || !meta) return;
     const label = shortTitle(task.title);
     const testName =
       meta.template.tests[(iteration - 1) % meta.template.tests.length];
 
-    if (this.qaFails(task)) {
-      controller.enqueue([
-        {
-          kind: "emote",
-          status: "error",
-          duration: durations.errorEmote,
-          activity: `Failing test: ${testName}`,
-        },
-        {
-          kind: "talk",
-          target: "kai",
-          duration: durations.report,
-          activity: `Reporting ${testName} to Kai`,
-          onStart: () => this.ctx.pushLink("quinn", "kai", "report"),
-          onDone: () => {
-            this.ctx.emit(
-              "agent.message",
-              `Quinn reported ${testName} to Kai`,
-              {
-                agentId: "quinn",
-                targetAgentId: "kai",
-                taskId,
-                severity: "info",
-              },
-            );
-            this.ctx.emit(
-              "qa.failed",
-              `Quinn: failing test: ${testName}`,
-              {
-                agentId: "quinn",
-                targetAgentId: "kai",
-                taskId,
-                severity: "warning",
-                metadata: { test: testName, iteration },
-              },
-            );
-            this.rework(taskId, "tests_failed");
-          },
-        },
-      ]);
-      return;
-    }
-
-    controller.enqueue([
-      {
-        kind: "emote",
-        status: "success",
-        duration: durations.celebrate,
+    this.enqueueOutcome({
+      agentId: "quinn",
+      taskId,
+      failed: this.qaFails(task),
+      failSignal: "tests_failed",
+      passSignal: "tests_passed",
+      fail: {
+        activity: `Failing test: ${testName}`,
+        target: "kai",
+        talk: `Reporting ${testName} to Kai`,
+        message: `Quinn reported ${testName} to Kai`,
+        eventType: "qa.failed",
+        eventMessage: `Quinn: failing test: ${testName}`,
+        metadata: { test: testName, iteration },
+        severity: "warning",
+      },
+      pass: {
         activity: `All tests passing for "${label}"`,
-      },
-      {
-        kind: "talk",
         target: "rex",
-        duration: durations.report,
-        activity: `Handing build #${iteration} to Rex for review`,
-        onStart: () => this.ctx.pushLink("quinn", "rex", "report"),
-        onDone: () => {
-          this.ctx.emit(
-            "agent.message",
-            `Quinn handed build #${iteration} to Rex for review`,
-            {
-              agentId: "quinn",
-              targetAgentId: "rex",
-              taskId,
-              severity: "info",
-            },
-          );
-          this.ctx.emit(
-            "qa.passed",
-            `Quinn passed build #${iteration} of "${label}"`,
-            {
-              agentId: "quinn",
-              targetAgentId: "rex",
-              taskId,
-              severity: "success",
-              metadata: { iteration },
-            },
-          );
-          this.ctx.applyAndEnter(taskId, "tests_passed");
-        },
+        talk: `Handing build #${iteration} to Rex for review`,
+        message: `Quinn handed build #${iteration} to Rex for review`,
+        eventType: "qa.passed",
+        eventMessage: `Quinn passed build #${iteration} of "${label}"`,
+        metadata: { iteration },
+        severity: "success",
       },
-    ]);
+    });
   }
 
   private scheduleReview(task: Task): void {
@@ -539,95 +508,83 @@ export class PhaseChoreography {
 
   private decideReview(taskId: string, iteration: number): void {
     const task = this.ctx.getTask(taskId);
-    const controller = this.ctx.getController("rex");
     const meta = this.ctx.getMeta(taskId);
-    if (!task || !controller || !meta) return;
-    const durations = this.ctx.config.durations;
+    if (!task || !meta) return;
     const label = shortTitle(task.title);
     const note =
       meta.template.reviewNotes[
         (iteration - 1) % meta.template.reviewNotes.length
       ];
 
-    if (this.reviewRequestsChanges(task)) {
-      controller.enqueue([
-        {
-          kind: "emote",
-          status: "error",
-          duration: durations.errorEmote,
-          activity: `Requesting changes: ${note}`,
-        },
-        {
-          kind: "talk",
-          target: "kai",
-          duration: durations.report,
-          activity: "Walking Kai through the review notes",
-          onStart: () => this.ctx.pushLink("rex", "kai", "report"),
-          onDone: () => {
-            this.ctx.emit(
-              "agent.message",
-              `Rex walked Kai through the review notes`,
-              {
-                agentId: "rex",
-                targetAgentId: "kai",
-                taskId,
-                severity: "info",
-              },
-            );
-            this.ctx.emit(
-              "review.changes_requested",
-              `Rex requested changes: ${note}`,
-              {
-                agentId: "rex",
-                targetAgentId: "kai",
-                taskId,
-                severity: "warning",
-                metadata: { note, iteration },
-              },
-            );
-            this.rework(taskId, "changes_requested");
-          },
-        },
-      ]);
-      return;
-    }
+    this.enqueueOutcome({
+      agentId: "rex",
+      taskId,
+      failed: this.reviewRequestsChanges(task),
+      failSignal: "changes_requested",
+      passSignal: "approved",
+      fail: {
+        activity: `Requesting changes: ${note}`,
+        target: "kai",
+        talk: "Walking Kai through the review notes",
+        message: "Rex walked Kai through the review notes",
+        eventType: "review.changes_requested",
+        eventMessage: `Rex requested changes: ${note}`,
+        metadata: { note, iteration },
+        severity: "warning",
+      },
+      pass: {
+        activity: `Approving "${label}"`,
+        target: "orion",
+        talk: "Reporting the approval to Orion",
+        message: `Rex approved "${label}" and told Orion`,
+        eventType: "review.approved",
+        eventMessage: `Rex approved "${label}"`,
+        metadata: { iteration },
+        severity: "success",
+      },
+    });
+  }
+
+  /** Shared fail/pass choreography for QA and code review. */
+  private enqueueOutcome(outcome: PhaseOutcome): void {
+    const controller = this.ctx.getController(outcome.agentId);
+    if (!controller) return;
+    const durations = this.ctx.config.durations;
+    const handoff = outcome.failed ? outcome.fail : outcome.pass;
 
     controller.enqueue([
       {
         kind: "emote",
-        status: "success",
-        duration: durations.celebrate,
-        activity: `Approving "${label}"`,
+        status: outcome.failed ? "error" : "success",
+        duration: outcome.failed ? durations.errorEmote : durations.celebrate,
+        activity: handoff.activity,
       },
       {
         kind: "talk",
-        target: "orion",
+        target: handoff.target,
         duration: durations.report,
-        activity: "Reporting the approval to Orion",
-        onStart: () => this.ctx.pushLink("rex", "orion", "report"),
+        activity: handoff.talk,
+        onStart: () =>
+          this.ctx.pushLink(outcome.agentId, handoff.target, "report"),
         onDone: () => {
-          this.ctx.emit(
-            "agent.message",
-            `Rex approved "${label}" and told Orion`,
-            {
-              agentId: "rex",
-              targetAgentId: "orion",
-              taskId,
-              severity: "info",
-            },
-          );
-          this.ctx.emit(
-            "review.approved",
-            `Rex approved "${label}"`,
-            {
-              agentId: "rex",
-              targetAgentId: "orion",
-              taskId,
-              severity: "success",
-              metadata: { iteration },
-            },
-          );
-          this.ctx.applyAndEnter(taskId, "approved");
+          this.ctx.emit("agent.message", handoff.message, {
+            agentId: outcome.agentId,
+            targetAgentId: handoff.target,
+            taskId: outcome.taskId,
+            severity: "info",
+          });
+          this.ctx.emit(handoff.eventType, handoff.eventMessage, {
+            agentId: outcome.agentId,
+            targetAgentId: handoff.target,
+            taskId: outcome.taskId,
+            severity: handoff.severity,
+            metadata: handoff.metadata,
+          });
+          if (outcome.failed) {
+            this.rework(outcome.taskId, outcome.failSignal);
+          } else {
+            this.ctx.applyAndEnter(outcome.taskId, outcome.passSignal);
+          }
         },
       },
     ]);

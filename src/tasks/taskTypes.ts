@@ -152,8 +152,6 @@ export const PHASE_OWNER: Record<WorkflowPhase, AgentId | null> = {
   failed: null,
 };
 
-export const TERMINAL_PHASES: readonly WorkflowPhase[] = ["done", "failed"];
-
 export function isTerminalPhase(phase: WorkflowPhase): boolean {
   return phase === "done" || phase === "failed";
 }

@@ -1,4 +1,5 @@
 import type { AgentId } from "../agents/agentTypes.ts";
+import { SIMULATION_CONFIG } from "../simulation/simulationConfig.ts";
 import type { AgentEvent } from "./eventTypes.ts";
 import { isAgentCommunication } from "./eventTypes.ts";
 
@@ -6,7 +7,7 @@ import { isAgentCommunication } from "./eventTypes.ts";
 export function appendEvent(
   log: readonly AgentEvent[],
   event: AgentEvent,
-  max = 400,
+  max = SIMULATION_CONFIG.maxEvents,
 ): AgentEvent[] {
   return [event, ...log].slice(0, Math.max(0, max));
 }

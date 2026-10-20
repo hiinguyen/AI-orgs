@@ -155,7 +155,6 @@ export class SimulationEngine {
   reset(): void {
     this.status = "ready";
     this.clock = 0;
-    this.speed = this.config.defaultSpeed;
 
     this.tasks.clear();
     this.taskOrder.length = 0;
@@ -171,6 +170,9 @@ export class SimulationEngine {
     this.emit("system.reset", "Simulation reset - six agents idle", {
       severity: "info",
     });
+    // The next run starts at evt-0001, exactly like a fresh engine. The reset
+    // event that closes the previous run keeps its old id.
+    this.eventSeq = 0;
     this.publishSnapshot();
   }
 
@@ -249,20 +251,7 @@ export class SimulationEngine {
 
     for (const task of this.tasks.values()) {
       if (task.assignedAgentId !== id || isTerminalPhase(task.phase)) continue;
-      if (task.status === "blocked") continue;
-      task.status = "blocked";
-      task.blockedReason = `${name} is paused`;
-      task.updatedAt = roundClock(this.clock);
-      this.emit(
-        "task.blocked",
-        `"${shortTitle(task.title)}" is blocked because ${name} is paused`,
-        {
-          taskId: task.id,
-          agentId: id,
-          severity: "warning",
-          metadata: { reason: task.blockedReason },
-        },
-      );
+      this.blockTaskForPausedOwner(task);
     }
     this.publishSnapshot();
   }
@@ -394,7 +383,35 @@ export class SimulationEngine {
     if (previousOwner && previousOwner !== updated.assignedAgentId) {
       this.detachOwner(previousOwner, taskId);
     }
+    this.blockTaskForPausedOwner(updated);
     this.choreography.enterPhase(updated);
+  }
+
+  /**
+   * Spec 3.2: while the responsible agent is paused the projected status is
+   * overridden to `blocked`. The phase stays untouched, so resuming restores
+   * the status from `PHASE_STATUS` again.
+   */
+  private blockTaskForPausedOwner(task: Task): void {
+    if (isTerminalPhase(task.phase) || task.status === "blocked") return;
+    const owner = task.assignedAgentId;
+    if (!owner) return;
+    const ownerState = this.agents.get(owner);
+    if (!ownerState?.paused) return;
+    const name = agentName(owner);
+    task.status = "blocked";
+    task.blockedReason = `${name} is paused`;
+    task.updatedAt = roundClock(this.clock);
+    this.emit(
+      "task.blocked",
+      `"${shortTitle(task.title)}" is blocked because ${name} is paused`,
+      {
+        taskId: task.id,
+        agentId: owner,
+        severity: "warning",
+        metadata: { reason: task.blockedReason },
+      },
+    );
   }
 
   private detachOwner(agentId: AgentId, taskId: string): void {
