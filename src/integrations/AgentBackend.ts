@@ -24,6 +24,12 @@ export interface WorldSnapshot {
   links: CommLink[];
 }
 
+/** Transport health, reported by backends that can lose their connection. */
+export interface BackendConnectionState {
+  connected: boolean;
+  error: string | null;
+}
+
 /**
  * The only boundary the UI and the 3D layer know. MockAgentBackend runs the
  * local simulation; a WebSocket backend can implement the same surface.
@@ -50,4 +56,8 @@ export interface AgentBackend {
   getSnapshot(): WorldSnapshot | null;
   subscribe(listener: (event: AgentEvent) => void): () => void;
   subscribeSnapshot(listener: (snapshot: WorldSnapshot) => void): () => void;
+  /** Optional: only transports that can drop a connection need to report. */
+  subscribeConnection?(
+    listener: (state: BackendConnectionState) => void,
+  ): () => void;
 }

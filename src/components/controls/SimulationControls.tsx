@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Layers,
   Pause,
@@ -24,6 +24,14 @@ export function SimulationControls() {
   const openTaskDialog = useWorldStore((state) => state.openTaskDialog);
 
   const [confirmReset, setConfirmReset] = useState(false);
+  const resetButtonRef = useRef<HTMLButtonElement>(null);
+  const returnFocusRef = useRef(false);
+
+  useEffect(() => {
+    if (confirmReset || !returnFocusRef.current) return;
+    returnFocusRef.current = false;
+    resetButtonRef.current?.focus();
+  }, [confirmReset]);
 
   const running = simStatus === "running";
   const runLabel = running
@@ -50,12 +58,18 @@ export function SimulationControls() {
   };
 
   const handleConfirmReset = async () => {
+    returnFocusRef.current = true;
     setConfirmReset(false);
     await commands.reset();
     const store = useWorldStore.getState();
     store.clearSelection();
     store.closeTaskDialog();
     store.setActiveTab("overview");
+  };
+
+  const cancelReset = () => {
+    returnFocusRef.current = true;
+    setConfirmReset(false);
   };
 
   return (
@@ -116,13 +130,14 @@ export function SimulationControls() {
           <button
             type="button"
             className="btn btn-quiet h-7 px-1.5 text-[10.5px]"
-            onClick={() => setConfirmReset(false)}
+            onClick={cancelReset}
           >
             Cancel
           </button>
         </div>
       ) : (
         <button
+          ref={resetButtonRef}
           type="button"
           className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
           onClick={() => setConfirmReset(true)}

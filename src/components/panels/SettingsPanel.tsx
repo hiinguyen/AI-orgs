@@ -173,20 +173,28 @@ export function SettingsPanel() {
               aria-hidden="true"
               className={cn(
                 "h-1.5 w-1.5 rounded-full",
-                backend.connected ? "bg-ok" : "bg-mist-500",
+                backend.connected
+                  ? "bg-ok"
+                  : backend.error
+                    ? "bg-warn"
+                    : "bg-mist-500",
               )}
             />
             <span className="text-[12px] font-medium text-mist-100">
               {backend.label}
             </span>
             <span className="ml-auto font-mono text-[9.5px] uppercase tracking-[0.08em] text-mist-500">
-              {backend.connected ? "Connected" : "Offline"}
+              {backend.connected
+                ? "Connected"
+                : backend.error
+                  ? "Reconnecting"
+                  : "Offline"}
             </span>
           </div>
           <p className="mt-1.5 text-[10.5px] leading-4 text-mist-500">
             {backend.simulated
               ? "Simulation mode - no live inference. The local engine replays canned workflow templates; no model is called and no code is executed."
-              : "Live backend session. State and events arrive over the websocket protocol."}
+              : "Live backend session. State and events arrive over the websocket protocol; a dropped socket reconnects automatically with capped backoff."}
           </p>
           {backend.error && (
             <p className="mt-2 rounded-md border border-bad/25 bg-bad/[0.08] px-2 py-1.5 text-[10.5px] leading-4 text-bad">

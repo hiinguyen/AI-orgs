@@ -80,6 +80,31 @@ export function AgentAvatar({
   );
 }
 
+/**
+ * The avatar slot for events that have no agent (boot, reset, speed changes).
+ * Same footprint as an agent avatar so activity rows keep one vertical rhythm.
+ */
+export function SystemAvatar({
+  size = 28,
+  className,
+}: {
+  size?: number;
+  className?: string;
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-flex shrink-0 items-center justify-center rounded-[9px] border border-white/[0.09] bg-white/[0.05] text-mist-500",
+        className,
+      )}
+      style={{ width: size, height: size }}
+    >
+      <Logo className="h-[58%] w-[58%]" />
+    </span>
+  );
+}
+
 export function agentStatusLabel(agent: AgentState): string {
   if (agent.paused) return "Paused";
   switch (agent.status) {

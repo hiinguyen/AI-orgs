@@ -26,6 +26,7 @@ function pickInitialQuality(): { quality: "high" | "low"; auto: boolean } {
 
 export function AppShell() {
   const sceneReady = useWorldStore((state) => state.sceneReady);
+  const backendConnected = useWorldStore((state) => state.backend.connected);
   const navRef = useRef<HTMLElement | null>(null);
   const topRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -37,9 +38,9 @@ export function AppShell() {
   }, []);
 
   useEffect(() => {
-    if (!sceneReady) return;
+    if (!sceneReady || !backendConnected) return;
     void commands.autoStartIfReady();
-  }, [sceneReady]);
+  }, [sceneReady, backendConnected]);
 
   useEffect(() => {
     const measure = () => {
@@ -93,15 +94,12 @@ export function AppShell() {
 
       const target = event.target;
       if (target instanceof HTMLElement) {
-        const tag = target.tagName;
-        if (
-          tag === "INPUT" ||
-          tag === "TEXTAREA" ||
-          tag === "SELECT" ||
-          target.isContentEditable
-        ) {
-          return;
-        }
+        // Never steal a key from a focused control: Space activates the
+        // focused button, radio or tab instead of pausing the simulation.
+        const interactive = target.closest(
+          'button, a, [role="radio"], [role="tab"], [role="dialog"], input, textarea, select, [contenteditable]',
+        );
+        if (interactive !== null) return;
       }
 
       const key = event.key.toLowerCase();

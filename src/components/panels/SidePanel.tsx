@@ -33,13 +33,16 @@ export function SidePanel({
   const selectedAgentId = useWorldStore((state) => state.selectedAgentId);
   const selectedTaskId = useWorldStore((state) => state.selectedTaskId);
   const clearSelection = useWorldStore((state) => state.clearSelection);
-  const events = useWorldStore((state) => state.events);
+  // Only the Activity tab needs the count. Selecting a number keeps feed
+  // updates from re-rendering the panel shell on the other four tabs.
+  const feedCount = useWorldStore((state) =>
+    state.activeTab === "activity" ? feedEvents(state.events).length : 0,
+  );
 
   const title = TITLES[activeTab];
   const drilled =
     (activeTab === "agents" && selectedAgentId !== null) ||
     (activeTab === "tasks" && selectedTaskId !== null);
-  const feedCount = feedEvents(events).length;
 
   let content = null;
   switch (activeTab) {
@@ -73,7 +76,7 @@ export function SidePanel({
       ref={ref}
       aria-label={`${title} panel`}
       className={cn(
-        "surface flex h-[40dvh] w-full shrink-0 flex-col overflow-hidden rounded-2xl md:h-auto md:w-[384px]",
+        "surface flex h-[40dvh] w-full shrink-0 flex-col overflow-hidden rounded-2xl md:h-auto md:w-[clamp(384px,27vw,400px)]",
         className,
       )}
     >

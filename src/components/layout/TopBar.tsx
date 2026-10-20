@@ -12,7 +12,7 @@ function Metric({ label, value }: { label: string; value: number }) {
   return (
     <div className="min-w-[42px]">
       <p className="eyebrow">{label}</p>
-      <p className="mt-1 text-[18px] font-semibold leading-none tabular-nums text-mist-100">
+      <p className="mt-1 flex h-[18px] items-center text-[18px] font-semibold leading-none tabular-nums text-mist-100">
         {value}
       </p>
     </div>
@@ -50,6 +50,12 @@ export function TopBar({
   const backend = useWorldStore((state) => state.backend);
 
   const meta = STATUS_META[status];
+  const live = !backend.simulated;
+  const connectionLabel = backend.connected
+    ? "connected"
+    : backend.error
+      ? "reconnecting"
+      : "connecting";
 
   return (
     <header
@@ -59,7 +65,7 @@ export function TopBar({
         className,
       )}
     >
-      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+      <div className="flex min-w-0 items-center gap-2.5">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-white/[0.08] bg-white/[0.03] text-signal md:hidden">
           <Logo className="h-5 w-5" />
         </div>
@@ -67,10 +73,21 @@ export function TopBar({
           <h1 className="truncate text-[14px] font-semibold leading-tight tracking-tight text-mist-100">
             AI Agent World
           </h1>
-          <p className="mt-0.5 truncate text-[10px] leading-tight text-mist-500">
-            {backend.simulated
-              ? "Simulation mode · no live inference"
-              : "Live backend"}
+          <p className="mt-0.5 flex min-w-0 items-center gap-1.5 text-[10px] leading-tight text-mist-500">
+            {live && (
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                  backend.connected ? "bg-ok" : "bg-warn",
+                )}
+              />
+            )}
+            <span className="truncate">
+              {live
+                ? `Live backend · ${connectionLabel}`
+                : "Simulation mode · no live inference"}
+            </span>
           </p>
         </div>
       </div>
@@ -80,9 +97,9 @@ export function TopBar({
         <Metric label="Active" value={activeCount} />
         <Metric label="Pending" value={pendingCount} />
         <Metric label="Completed" value={completedCount} />
-        <div className="min-w-[60px]">
+        <div className="min-w-[64px]">
           <p className="eyebrow">Status</p>
-          <span className="mt-1 flex items-center gap-1.5 text-[11.5px] font-medium leading-none text-mist-300">
+          <span className="mt-1 flex h-[18px] items-center gap-1.5 text-[11.5px] font-medium leading-none text-mist-300">
             <span
               aria-hidden="true"
               className={cn(

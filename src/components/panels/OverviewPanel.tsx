@@ -153,6 +153,7 @@ export function OverviewPanel() {
         <ActivityFeed
           events={latest}
           compact
+          live
           onJump={selectAgent}
           className="mt-1"
         />

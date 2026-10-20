@@ -28,6 +28,7 @@ function TaskDialogForm({
   preferredAgentId: AgentId | null;
 }) {
   const closeDialog = useWorldStore((state) => state.closeTaskDialog);
+  const simulated = useWorldStore((state) => state.backend.simulated);
 
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
@@ -36,6 +37,14 @@ function TaskDialogForm({
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     const previous =
@@ -105,6 +114,10 @@ function TaskDialogForm({
       ...(preferredAgentId ? { preferredAgentId } : {}),
     };
     const task = await commands.submitTask(input);
+    // The dialog may have been closed (or closed and re-opened) while the
+    // backend was answering. A stale ack must not steal the new dialog's
+    // focus, close it, or move the camera.
+    if (!mountedRef.current) return;
     setSubmitting(false);
     if (!task) return;
 
@@ -262,8 +275,9 @@ function TaskDialogForm({
               id="task-dialog-note"
               className="max-w-[250px] text-[9.5px] leading-4 text-mist-500"
             >
-              Simulation mode - agents act out the workflow; no AI inference
-              or code execution happens.
+              {simulated
+                ? "Simulation mode - agents act out the workflow; no AI inference or code execution happens."
+                : "Live backend - the task is sent to the orchestrator over WebSocket and its progress streams back into this view."}
             </p>
             <div className="flex shrink-0 items-center justify-end gap-1.5">
               <button

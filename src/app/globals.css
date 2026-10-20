@@ -248,13 +248,16 @@
     background: currentColor;
   }
 
+  /* Concentric ring: the pseudo element shares the dot's centre and only
+     scales, so it can never look offset from the dot. */
   .pulse-dot::after {
     content: "";
     position: absolute;
-    inset: -4px;
+    inset: 0;
     border-radius: 999px;
     border: 1px solid currentColor;
     opacity: 0;
+    transform-origin: center;
     animation: aaw-pulse 2.4s ease-out infinite;
   }
 
@@ -369,12 +372,12 @@
 
 @keyframes aaw-pulse {
   0% {
-    transform: scale(0.6);
-    opacity: 0.8;
+    transform: scale(1);
+    opacity: 0.75;
   }
   70%,
   100% {
-    transform: scale(1.9);
+    transform: scale(3);
     opacity: 0;
   }
 }
@@ -401,7 +404,9 @@
   }
 
   .pulse-dot::after {
-    display: none;
+    animation: none;
+    opacity: 0.45;
+    transform: scale(1.8);
   }
 
   .agent-bubble {

@@ -31,6 +31,7 @@ export function ActivityPanel() {
 
       <ActivityFeed
         events={visible}
+        live
         onJump={selectAgent}
         className="mt-2"
       />

@@ -74,19 +74,30 @@ export function connectBackend(): () => void {
   });
 
   if (connection === null || connection.backend !== activeBackend) {
+    const token = Symbol("backend-connection");
     const unsubscribeEvent = activeBackend.subscribe((event) => {
       useWorldStore.getState().applyEvent(event);
     });
     const unsubscribeSnapshot = activeBackend.subscribeSnapshot((snapshot) => {
       useWorldStore.getState().applySnapshot(snapshot);
     });
+    const unsubscribeConnection = activeBackend.subscribeConnection?.(
+      (state) => {
+        if (connection?.token !== token) return;
+        useWorldStore.getState().setBackend({
+          connected: state.connected,
+          error: state.error,
+        });
+      },
+    );
     connection = {
       backend: activeBackend,
-      token: Symbol("backend-connection"),
+      token,
       refs: 0,
       unsubscribe: () => {
         unsubscribeEvent();
         unsubscribeSnapshot();
+        unsubscribeConnection?.();
       },
     };
   }
@@ -194,12 +205,18 @@ export const commands = {
       "Could not resume the agent",
     ),
 
-  /** Starts the local simulation once the world has rendered. */
+  /**
+   * Starts the backend once the world is ready and the transport is actually
+   * connected. In websocket mode `sceneReady` can flip before the socket
+   * opens, so the snapshot is null and the command would fail; and a server
+   * that is already running must not be restarted.
+   */
   autoStartIfReady: async (): Promise<void> => {
     const state = useWorldStore.getState();
-    if (!state.sceneReady || !SIMULATION_CONFIG.autoStart) return;
+    if (!state.sceneReady || !state.backend.connected) return;
+    if (!SIMULATION_CONFIG.autoStart) return;
     const snapshot = getBackend().getSnapshot();
-    if (snapshot !== null && snapshot.status !== "ready") return;
+    if (snapshot === null || snapshot.status !== "ready") return;
     await attempt(() => getBackend().start(), "Could not start the simulation");
   },
 
