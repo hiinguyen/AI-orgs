@@ -203,7 +203,17 @@ export const useWorldStore = create<WorldStore>()((set) => {
         activeTab: "tasks",
       }),
 
-    selectStation: (id) => set({ selectedStationId: id }),
+    selectStation: (id) =>
+      set(
+        id === null
+          ? { selectedStationId: null }
+          : {
+              selectedStationId: id,
+              selectedAgentId: null,
+              selectedTaskId: null,
+              activeTab: "agents",
+            },
+      ),
 
     setHovered: (target) => set({ hovered: target }),
 

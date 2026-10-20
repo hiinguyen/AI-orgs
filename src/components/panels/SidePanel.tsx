@@ -11,8 +11,10 @@ import { AgentDetails } from "./AgentDetails";
 import { AgentsPanel } from "./AgentsPanel";
 import { OverviewPanel } from "./OverviewPanel";
 import { SettingsPanel } from "./SettingsPanel";
+import { StationDetails } from "./StationDetails";
 import { TaskDetails } from "./TaskDetails";
 import { TasksPanel } from "./TasksPanel";
+import { isStationId } from "@/world/stationOwners";
 
 const TITLES: Record<TabId, string> = {
   overview: "Overview",
@@ -32,6 +34,7 @@ export function SidePanel({
   const activeTab = useWorldStore((state) => state.activeTab);
   const selectedAgentId = useWorldStore((state) => state.selectedAgentId);
   const selectedTaskId = useWorldStore((state) => state.selectedTaskId);
+  const selectedStationId = useWorldStore((state) => state.selectedStationId);
   const clearSelection = useWorldStore((state) => state.clearSelection);
   // Only the Activity tab needs the count. Selecting a number keeps feed
   // updates from re-rendering the panel shell on the other four tabs.
@@ -40,8 +43,13 @@ export function SidePanel({
   );
 
   const title = TITLES[activeTab];
+  const selectedStation =
+    selectedStationId !== null && isStationId(selectedStationId)
+      ? selectedStationId
+      : null;
   const drilled =
-    (activeTab === "agents" && selectedAgentId !== null) ||
+    (activeTab === "agents" &&
+      (selectedAgentId !== null || selectedStation !== null)) ||
     (activeTab === "tasks" && selectedTaskId !== null);
 
   let content = null;
@@ -50,11 +58,14 @@ export function SidePanel({
       content = <OverviewPanel />;
       break;
     case "agents":
-      content = selectedAgentId ? (
-        <AgentDetails agentId={selectedAgentId} />
-      ) : (
-        <AgentsPanel />
-      );
+      content =
+        selectedStation !== null ? (
+          <StationDetails stationId={selectedStation} />
+        ) : selectedAgentId ? (
+          <AgentDetails agentId={selectedAgentId} />
+        ) : (
+          <AgentsPanel />
+        );
       break;
     case "tasks":
       content = selectedTaskId ? (

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import dynamic from "next/dynamic";
 import { connectBackend, commands } from "@/integrations/backendClient";
 import { useWorldStore } from "@/state/useWorldStore";
 import { CameraBar } from "@/components/controls/CameraBar";
@@ -9,7 +10,11 @@ import { TopBar } from "./TopBar";
 import { LoadingScreen } from "./LoadingScreen";
 import { SidePanel } from "@/components/panels/SidePanel";
 import { TaskDialog } from "@/components/panels/TaskDialog";
-import { WorldPlaceholder } from "./WorldPlaceholder";
+
+const WorldCanvas = dynamic(
+  () => import("@/world/WorldCanvas").then((module) => module.WorldCanvas),
+  { ssr: false },
+);
 
 function pickInitialQuality(): { quality: "high" | "low"; auto: boolean } {
   const params = new URLSearchParams(window.location.search);
@@ -142,7 +147,7 @@ export function AppShell() {
 
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
-      <WorldPlaceholder />
+      <WorldCanvas />
 
       <div className="pointer-events-none absolute inset-0 flex flex-col gap-2 p-2 md:flex-row md:gap-3 md:p-3">
         <NavRail
