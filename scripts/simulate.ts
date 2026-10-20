@@ -2,8 +2,9 @@
  * Headless engine checks, run with:
  *   node --experimental-strip-types --no-warnings scripts/simulate.ts
  *
- * Six groups, matching section 9 of the spec. Prints a check or cross per
- * assertion and exits 1 if anything fails.
+ * Six groups, matching section 9 of the spec, plus store mirror and WebSocket
+ * boundary checks. Prints a check or cross per assertion and exits 1 if
+ * anything fails.
  */
 import { SimulationEngine } from "../src/simulation/SimulationEngine.ts";
 import { TICK_SECONDS } from "../src/simulation/simulationConfig.ts";
@@ -18,6 +19,16 @@ import type { WorkflowPhase } from "../src/tasks/taskTypes.ts";
 import type { AgentId } from "../src/agents/agentTypes.ts";
 import type { AgentEvent } from "../src/events/eventTypes.ts";
 import type { CreateTaskInput, Task } from "../src/tasks/taskTypes.ts";
+import type { WorldSnapshot } from "../src/integrations/AgentBackend.ts";
+import {
+  MIRROR_INTERVAL_MS,
+  ThrottledMirror,
+} from "../src/state/mirrorThrottle.ts";
+import {
+  WebSocketAgentBackend,
+  parseAgentEvent,
+  parseWorldSnapshot,
+} from "../src/integrations/WebSocketAgentBackend.ts";
 
 let checks = 0;
 let failures = 0;
@@ -180,7 +191,7 @@ function runDemo(): DemoRun {
   return { task: taskById(engine, created.id), clock, events };
 }
 
-function main(): void {
+async function main(): Promise<void> {
   console.log("AI Agent World - headless simulation checks");
 
   // ---------------------------------------------------------------- group 1
@@ -730,6 +741,361 @@ function main(): void {
     );
   }
 
+  // ---------------------------------------------------------------- group 7
+  group("7. React mirror throttle");
+  {
+    interface FakeTimer {
+      at: number;
+      callback: () => void;
+      cancelled: boolean;
+    }
+
+    const timers: FakeTimer[] = [];
+    const pushes: number[] = [];
+    let now = 0;
+
+    const advance = (ms: number): void => {
+      const target = now + ms;
+      for (;;) {
+        let next: FakeTimer | null = null;
+        for (const timer of timers) {
+          if (
+            !timer.cancelled &&
+            timer.at <= target &&
+            (next === null || timer.at < next.at)
+          ) {
+            next = timer;
+          }
+        }
+        if (next === null) break;
+        next.cancelled = true;
+        now = next.at;
+        next.callback();
+      }
+      now = target;
+    };
+
+    const mirror = new ThrottledMirror({
+      intervalMs: MIRROR_INTERVAL_MS,
+      now: () => now,
+      setTimer: (callback, ms) => {
+        const timer: FakeTimer = { at: now + ms, callback, cancelled: false };
+        timers.push(timer);
+        return timer as unknown as ReturnType<typeof setTimeout>;
+      },
+      clearTimer: (handle) => {
+        (handle as unknown as FakeTimer).cancelled = true;
+      },
+      push: () => {
+        pushes.push(now);
+      },
+    });
+
+    const baseEngine = new SimulationEngine();
+    baseEngine.start();
+    baseEngine.submitTask(DEMO_TASK);
+    for (let index = 0; index < 120; index += 1) {
+      baseEngine.tick(TICK_SECONDS);
+    }
+    const base = baseEngine.snapshot();
+    check(
+      "mirror check starts from a live world",
+      base.tasks.length > 0 && base.agents.length === 6,
+      `${base.tasks.length} tasks`,
+    );
+
+    const positionOnly = (step: number): WorldSnapshot => ({
+      ...base,
+      clock: base.clock + step * 0.01,
+      agents: base.agents.map((agent, index) => ({
+        ...agent,
+        position: {
+          x: agent.position.x + step * 0.01 * (index + 1),
+          z: agent.position.z - step * 0.005,
+        },
+        heading: agent.heading + step * 0.002,
+      })),
+    });
+
+    const progressOnly = (step: number): WorldSnapshot => ({
+      ...base,
+      clock: base.clock + step * 0.02,
+      agents: base.agents.map((agent) => ({
+        ...agent,
+        progress: Math.min(1, agent.progress + step * 0.002),
+      })),
+      tasks: base.tasks.map((task) => ({
+        ...task,
+        progress: Math.min(1, task.progress + step * 0.002),
+        updatedAt: task.updatedAt + step * 0.02,
+      })),
+    });
+
+    mirror.apply(base);
+    const seedCount = pushes.length;
+    for (let index = 0; index < 30; index += 1) {
+      now += 1000 / 30;
+      advance(0);
+      mirror.apply(positionOnly(index + 1));
+    }
+    advance(250);
+    check(
+      "30 position-only snapshots per second never reach the React mirror",
+      pushes.length === seedCount,
+      `${pushes.length - seedCount} extra updates`,
+    );
+
+    const progressStart = pushes.length;
+    for (let index = 0; index < 30; index += 1) {
+      now += 1000 / 30;
+      mirror.apply(progressOnly(index + 1));
+      advance(0);
+    }
+    advance(250);
+    const progressPushes = pushes.slice(progressStart);
+    const gaps = progressPushes
+      .slice(1)
+      .map((at, index) => at - progressPushes[index]);
+    check(
+      "progress-only snapshots are throttled to about one update per 160 ms",
+      progressPushes.length >= 3 && progressPushes.length <= 8,
+      `${progressPushes.length} updates in about one second`,
+    );
+    check(
+      "throttled mirror updates are at least 160 ms apart",
+      gaps.every((gap) => gap >= MIRROR_INTERVAL_MS - 1e-6),
+      gaps.map((gap) => gap.toFixed(1)).join(", "),
+    );
+
+    const beforeStatus = pushes.length;
+    now += 10;
+    const statusAt = now;
+    const statusResult = mirror.apply({ ...base, status: "paused" });
+    check(
+      "a status change reaches the mirror immediately",
+      statusResult === "immediate" &&
+        pushes.length === beforeStatus + 1 &&
+        pushes[pushes.length - 1] === statusAt,
+      `${statusResult}, ${pushes.length - beforeStatus} updates`,
+    );
+
+    mirror.dispose();
+  }
+
+  // ---------------------------------------------------------------- group 8
+  group("8. WebSocket boundary");
+  {
+    const wsEngine = new SimulationEngine();
+    wsEngine.start();
+    wsEngine.submitTask(DEMO_TASK);
+    for (let index = 0; index < 60; index += 1) {
+      wsEngine.tick(TICK_SECONDS);
+    }
+    const snapshot = wsEngine.snapshot();
+    const wsTask = snapshot.tasks[0];
+    check(
+      "snapshot fixture has a task",
+      wsTask !== undefined,
+      `${snapshot.tasks.length} tasks`,
+    );
+
+    check(
+      "a valid snapshot passes boundary validation",
+      parseWorldSnapshot(snapshot) !== null,
+    );
+    check(
+      "a snapshot with an unknown agent status is rejected",
+      parseWorldSnapshot({
+        ...snapshot,
+        agents: snapshot.agents.map((agent, index) =>
+          index === 0 ? { ...agent, status: "dancing" } : agent,
+        ),
+      }) === null,
+    );
+    check(
+      "a snapshot with an unknown task priority is rejected",
+      parseWorldSnapshot({
+        ...snapshot,
+        tasks: snapshot.tasks.map((task, index) =>
+          index === 0 ? { ...task, priority: "urgent" } : task,
+        ),
+      }) === null,
+    );
+
+    const wsEvent: AgentEvent = {
+      id: "evt-ws-1",
+      type: "agent.message",
+      timestamp: Date.now(),
+      simTime: 1.25,
+      agentId: "orion",
+      targetAgentId: "piper",
+      message: "Boundary check",
+      severity: "info",
+      feed: true,
+    };
+    check(
+      "a valid event passes boundary validation",
+      parseAgentEvent(wsEvent) !== null,
+    );
+    check(
+      "an event with an unknown type is rejected",
+      parseAgentEvent({ ...wsEvent, type: "agent.party" }) === null,
+    );
+
+    class FakeSocket {
+      static OPEN = 1;
+      static CONNECTING = 0;
+      static CLOSING = 2;
+      static CLOSED = 3;
+      static last: FakeSocket | null = null;
+
+      readyState = FakeSocket.CONNECTING;
+      onopen: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      onclose: (() => void) | null = null;
+      onmessage: ((message: { data: unknown }) => void) | null = null;
+      readonly sent: string[] = [];
+
+      constructor(_url: string) {
+        FakeSocket.last = this;
+      }
+
+      send(data: string): void {
+        this.sent.push(data);
+      }
+
+      close(): void {
+        if (this.readyState === FakeSocket.CLOSED) return;
+        this.readyState = FakeSocket.CLOSED;
+        this.onclose?.();
+      }
+
+      open(): void {
+        this.readyState = FakeSocket.OPEN;
+        this.onopen?.();
+      }
+
+      receive(data: unknown): void {
+        this.onmessage?.({ data });
+      }
+    }
+
+    const nativeWebSocket = globalThis.WebSocket;
+    globalThis.WebSocket = FakeSocket as unknown as typeof WebSocket;
+    try {
+      const backend = new WebSocketAgentBackend("ws://boundary.test");
+      const seenSnapshots: WorldSnapshot[] = [];
+      const seenEvents: AgentEvent[] = [];
+      backend.subscribeSnapshot((next) => seenSnapshots.push(next));
+      backend.subscribe((event) => seenEvents.push(event));
+
+      const connecting = backend.connect();
+      const socket = FakeSocket.last;
+      check("the websocket transport opens a socket", socket !== null);
+      if (socket === null) throw new Error("FakeSocket was not created");
+      socket.open();
+      await connecting;
+
+      socket.receive(JSON.stringify({ type: "snapshot", snapshot }));
+      check(
+        "a snapshot updates getSnapshot and notifies listeners",
+        backend.getSnapshot()?.clock === snapshot.clock &&
+          seenSnapshots.length === 1,
+      );
+
+      socket.receive(JSON.stringify({ type: "event", event: wsEvent }));
+      check(
+        "an event notifies subscribers",
+        seenEvents.length === 1 && seenEvents[0].message === wsEvent.message,
+      );
+
+      const nativeWarn = console.warn;
+      let warnings = 0;
+      console.warn = () => {
+        warnings += 1;
+      };
+      try {
+        socket.receive(
+          JSON.stringify({
+            type: "snapshot",
+            snapshot: { ...snapshot, agents: [{ id: "orion" }] },
+          }),
+        );
+        socket.receive(
+          JSON.stringify({
+            type: "event",
+            event: { ...wsEvent, type: "agent.party" },
+          }),
+        );
+        socket.receive("not json");
+      } finally {
+        console.warn = nativeWarn;
+      }
+      check(
+        "malformed messages warn once each and leave state untouched",
+        warnings === 3 &&
+          backend.getSnapshot()?.clock === snapshot.clock &&
+          seenEvents.length === 1,
+        `${warnings} warnings`,
+      );
+
+      if (wsTask === undefined) throw new Error("Task fixture missing");
+      const submitted = backend.submitTask(DEMO_TASK);
+      const sentSubmit = socket.sent[socket.sent.length - 1];
+      const submitMessage = JSON.parse(sentSubmit ?? "{}") as {
+        id?: string;
+      };
+      socket.receive(
+        JSON.stringify({
+          type: "ack",
+          id: submitMessage.id,
+          ok: true,
+          result: wsTask,
+        }),
+      );
+      const created = await submitted;
+      check(
+        "submitTask resolves with the task from the matching ack",
+        created.id === wsTask.id,
+      );
+
+      const rejected = backend.start();
+      const sentStart = socket.sent[socket.sent.length - 1];
+      const startMessage = JSON.parse(sentStart ?? "{}") as { id?: string };
+      socket.receive(
+        JSON.stringify({
+          type: "ack",
+          id: startMessage.id,
+          ok: false,
+          error: "start is locked",
+        }),
+      );
+      let rejection = "";
+      try {
+        await rejected;
+      } catch (error) {
+        rejection = error instanceof Error ? error.message : "";
+      }
+      check(
+        "a failed ack rejects the command with the backend message",
+        rejection === "start is locked",
+        rejection,
+      );
+
+      const pending = backend.pause();
+      await backend.disconnect();
+      let disconnected = false;
+      try {
+        await pending;
+      } catch {
+        disconnected = true;
+      }
+      check("pending acks reject on disconnect", disconnected);
+    } finally {
+      globalThis.WebSocket = nativeWebSocket;
+    }
+  }
+
   // ----------------------------------------------------------------- summary
   console.log("");
   if (failures === 0) {
@@ -740,4 +1106,7 @@ function main(): void {
   }
 }
 
-main();
+void main().catch((error: unknown) => {
+  console.error(error);
+  process.exitCode = 1;
+});
