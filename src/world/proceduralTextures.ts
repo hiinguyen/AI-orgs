@@ -1,4 +1,6 @@
 import * as THREE from "three";
+import { AGENT_IDS } from "@/agents/agentTypes";
+import { AGENT_BY_ID } from "@/agents/AgentRegistry";
 
 /**
  * Procedural canvas textures for the office. Everything is drawn at runtime
@@ -57,15 +59,30 @@ export function floorTexture(): THREE.CanvasTexture {
     const { canvas, ctx } = createCanvas(size, size);
     const random = makeRandom(0x51f10a);
 
-    ctx.fillStyle = "#101821";
+    ctx.fillStyle = "#202a36";
     ctx.fillRect(0, 0, size, size);
 
+    // Four tiles per texture with a 5 x 3.5 repeat over the 30 x 21 m floor:
+    // one tile is 1.5 m, and the seams stay visible at the overview distance.
     const tiles = 4;
     const tile = size / tiles;
     for (let row = 0; row < tiles; row += 1) {
       for (let column = 0; column < tiles; column += 1) {
-        const shade = 24 + Math.floor(random() * 7);
-        ctx.fillStyle = `rgb(${shade}, ${shade + 7}, ${shade + 16})`;
+        const shade = 74 + Math.floor(random() * 12);
+        ctx.fillStyle = `rgb(${shade - 6}, ${shade}, ${shade + 12})`;
+        ctx.fillRect(column * tile, row * tile, tile, tile);
+
+        // A soft specular corner keeps each slab from reading as one flat fill.
+        const sheen = ctx.createLinearGradient(
+          column * tile,
+          row * tile,
+          column * tile + tile,
+          row * tile + tile,
+        );
+        sheen.addColorStop(0, "rgba(196, 218, 240, 0.07)");
+        sheen.addColorStop(0.4, "rgba(196, 218, 240, 0.015)");
+        sheen.addColorStop(1, "rgba(8, 12, 18, 0.08)");
+        ctx.fillStyle = sheen;
         ctx.fillRect(column * tile, row * tile, tile, tile);
       }
     }
@@ -78,18 +95,18 @@ export function floorTexture(): THREE.CanvasTexture {
       const radius = 6 + random() * 22;
       const bright = random() > 0.5;
       ctx.fillStyle = bright
-        ? `rgba(200, 220, 240, ${0.01 + random() * 0.018})`
-        : `rgba(0, 4, 8, ${0.02 + random() * 0.03})`;
+        ? `rgba(200, 220, 240, ${0.015 + random() * 0.02})`
+        : `rgba(0, 4, 8, ${0.02 + random() * 0.035})`;
       ctx.beginPath();
       ctx.arc(x, y, radius, 0, Math.PI * 2);
       ctx.fill();
     }
 
-    // Seams.
-    ctx.strokeStyle = "rgba(5, 8, 12, 0.85)";
-    ctx.lineWidth = 2;
+    // Seams: a wide dark joint plus a thin lit bevel one pixel inside it.
     for (let index = 0; index <= tiles; index += 1) {
       const position = Math.min(size - 1, index * tile);
+      ctx.strokeStyle = "rgba(3, 6, 10, 0.92)";
+      ctx.lineWidth = 4;
       ctx.beginPath();
       ctx.moveTo(position, 0);
       ctx.lineTo(position, size);
@@ -98,11 +115,23 @@ export function floorTexture(): THREE.CanvasTexture {
       ctx.moveTo(0, position);
       ctx.lineTo(size, position);
       ctx.stroke();
+
+      const bevel = Math.min(size - 1, position + 3);
+      ctx.strokeStyle = "rgba(168, 194, 220, 0.1)";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(bevel, 0);
+      ctx.lineTo(bevel, size);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(0, bevel);
+      ctx.lineTo(size, bevel);
+      ctx.stroke();
     }
 
     // Faint speckles keep large flat areas from looking like plastic.
     for (let index = 0; index < 180; index += 1) {
-      ctx.fillStyle = `rgba(190, 214, 236, ${0.01 + random() * 0.018})`;
+      ctx.fillStyle = `rgba(190, 214, 236, ${0.015 + random() * 0.02})`;
       const x = random() * size;
       const y = random() * size;
       ctx.fillRect(x, y, 1, 1);
@@ -111,7 +140,8 @@ export function floorTexture(): THREE.CanvasTexture {
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(10, 7);
+    texture.repeat.set(5, 3.5);
+    texture.anisotropy = 8;
     return asColorMap(texture);
   });
 }
@@ -123,36 +153,86 @@ export function windowsTexture(): THREE.CanvasTexture {
     const { canvas, ctx } = createCanvas(size, size);
     const random = makeRandom(0x7a3c19);
 
-    ctx.fillStyle = "#03060b";
+    // A faint blue facade instead of pure black: the tower silhouettes stay
+    // readable against the dusk sky, and the lit cells look like windows on a
+    // building rather than floating rectangles.
+    const body = ctx.createLinearGradient(0, 0, size, 0);
+    body.addColorStop(0, "#0a111a");
+    body.addColorStop(0.5, "#0d1520");
+    body.addColorStop(1, "#070c13");
+    ctx.fillStyle = body;
     ctx.fillRect(0, 0, size, size);
 
-    const cellWidth = 6;
-    const cellHeight = 3;
-    const gapX = 3;
-    const gapY = 3;
-    const columns = Math.floor(size / (cellWidth + gapX));
-    const rows = Math.floor(size / (cellHeight + gapY));
+    // Equal-ish window cells: ten columns and twenty floors keep the grid
+    // square on a tall tower face, so windows never stretch into light bars.
+    const columns = 10;
+    const rows = 20;
+    const cellWidth = 40;
+    const cellHeight = 18;
+    const gapX = 10;
+    const gapY = 7;
+    const originX = 6;
+    const originY = 6;
 
     for (let row = 0; row < rows; row += 1) {
       for (let column = 0; column < columns; column += 1) {
-        if (random() < 0.58) continue;
-        const warm = random() > 0.34;
-        const alpha = 0.26 + random() * 0.54;
-        ctx.fillStyle = warm
-          ? `rgba(246, 208, 148, ${alpha})`
-          : `rgba(170, 206, 240, ${alpha * 0.7})`;
-        ctx.fillRect(
-          column * (cellWidth + gapX) + gapX,
-          row * (cellHeight + gapY) + gapY,
-          cellWidth,
-          cellHeight,
-        );
+        const x = originX + column * (cellWidth + gapX);
+        const y = originY + row * (cellHeight + gapY);
+
+        ctx.fillStyle = "rgba(4, 8, 13, 0.88)";
+        ctx.fillRect(x - 2, y - 2, cellWidth + 4, cellHeight + 4);
+
+        const roll = random();
+        if (roll < 0.44) {
+          ctx.fillStyle = "rgba(16, 25, 36, 0.9)";
+          ctx.fillRect(x, y, cellWidth, cellHeight);
+          continue;
+        }
+
+        const warm = random() > 0.4;
+        const alpha = 0.34 + random() * 0.5;
+        const window = ctx.createLinearGradient(x, y, x, y + cellHeight);
+        if (warm) {
+          window.addColorStop(0, `rgba(255, 228, 178, ${alpha})`);
+          window.addColorStop(1, `rgba(224, 174, 116, ${alpha * 0.7})`);
+        } else {
+          window.addColorStop(0, `rgba(198, 224, 250, ${alpha})`);
+          window.addColorStop(1, `rgba(148, 186, 226, ${alpha * 0.68})`);
+        }
+        ctx.fillStyle = window;
+        ctx.fillRect(x, y, cellWidth, cellHeight);
+
+        // A few rooms are half shuttered or hold a bright interior panel.
+        if (roll < 0.53) {
+          ctx.fillStyle = "rgba(5, 9, 15, 0.55)";
+          ctx.fillRect(x, y, cellWidth, cellHeight * 0.45);
+        } else if (roll < 0.56) {
+          ctx.fillStyle = "rgba(255, 250, 235, 0.45)";
+          ctx.fillRect(
+            x + cellWidth * 0.12,
+            y + cellHeight * 0.5,
+            cellWidth * 0.3,
+            cellHeight * 0.32,
+          );
+        }
       }
+    }
+
+    // Floor lines and a lit facade edge give the block some structure.
+    ctx.strokeStyle = "rgba(120, 160, 198, 0.07)";
+    ctx.lineWidth = 1;
+    for (let row = 0; row <= rows; row += 1) {
+      const y = originY - 6 + row * (cellHeight + gapY);
+      ctx.beginPath();
+      ctx.moveTo(0, y + 0.5);
+      ctx.lineTo(size, y + 0.5);
+      ctx.stroke();
     }
 
     const texture = new THREE.CanvasTexture(canvas);
     texture.wrapS = THREE.RepeatWrapping;
     texture.wrapT = THREE.RepeatWrapping;
+    texture.anisotropy = 8;
     return asColorMap(texture);
   });
 }
@@ -334,7 +414,7 @@ export function blobTexture(): THREE.CanvasTexture {
   });
 }
 
-/** Warm radial glow for the hub and the light pools under the desks. */
+/** Neutral radial glow, tinted by the material that uses it. */
 export function glowTexture(): THREE.CanvasTexture {
   return cached("glow", () => {
     const size = 256;
@@ -347,9 +427,9 @@ export function glowTexture(): THREE.CanvasTexture {
       size / 2,
       size / 2,
     );
-    gradient.addColorStop(0, "rgba(255, 226, 178, 0.5)");
-    gradient.addColorStop(0.35, "rgba(255, 206, 145, 0.18)");
-    gradient.addColorStop(1, "rgba(255, 190, 120, 0)");
+    gradient.addColorStop(0, "rgba(255, 255, 255, 0.55)");
+    gradient.addColorStop(0.35, "rgba(255, 255, 255, 0.2)");
+    gradient.addColorStop(1, "rgba(255, 255, 255, 0)");
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, size, size);
     return asColorMap(new THREE.CanvasTexture(canvas));
@@ -358,123 +438,146 @@ export function glowTexture(): THREE.CanvasTexture {
 
 /**
  * Mission-control wall screen. Phase 3 keeps the content structural: the
- * workflow pipeline, the roster and the simulation disclaimer. Phase 5
- * replaces this drawing with live task content.
+ * workflow bar chart and the agent roster. Phase 5 replaces this drawing with
+ * live task content. The agent roster comes from the registry, so a renamed
+ * or recoloured agent never drifts from the 3D world.
  */
 export function missionControlTexture(): THREE.CanvasTexture {
   return cached("mission-control", () => {
-    const width = 1024;
+    const width = 1408;
     const height = 512;
     const { canvas, ctx } = createCanvas(width, height);
 
     const background = ctx.createLinearGradient(0, 0, 0, height);
-    background.addColorStop(0, "#08111c");
-    background.addColorStop(1, "#04080e");
+    background.addColorStop(0, "#0b1725");
+    background.addColorStop(0.55, "#07111c");
+    background.addColorStop(1, "#04090f");
     ctx.fillStyle = background;
     ctx.fillRect(0, 0, width, height);
 
-    // Header bar.
-    ctx.fillStyle = "rgba(12, 22, 34, 0.95)";
-    ctx.fillRect(0, 0, width, 66);
-    ctx.strokeStyle = "rgba(124, 196, 214, 0.25)";
+    // A faint grid reads as a screen surface without fighting the content.
+    ctx.strokeStyle = "rgba(124, 196, 214, 0.045)";
     ctx.lineWidth = 1;
+    for (let x = 0; x <= width; x += 44) {
+      ctx.beginPath();
+      ctx.moveTo(x + 0.5, 0);
+      ctx.lineTo(x + 0.5, height);
+      ctx.stroke();
+    }
+    for (let y = 0; y <= height; y += 44) {
+      ctx.beginPath();
+      ctx.moveTo(0, y + 0.5);
+      ctx.lineTo(width, y + 0.5);
+      ctx.stroke();
+    }
+
+    // Header bar.
+    ctx.fillStyle = "rgba(10, 21, 34, 0.96)";
+    ctx.fillRect(0, 0, width, 74);
+    ctx.strokeStyle = "rgba(124, 196, 214, 0.34)";
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(0, 66.5);
-    ctx.lineTo(width, 66.5);
+    ctx.moveTo(0, 74);
+    ctx.lineTo(width, 74);
     ctx.stroke();
 
     ctx.fillStyle = "#7cc4d6";
     ctx.beginPath();
-    ctx.arc(38, 33, 6, 0, Math.PI * 2);
+    ctx.arc(40, 37, 7, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = "#e8eef4";
-    ctx.font = "600 22px Inter, system-ui, sans-serif";
-    ctx.fillText("MISSION CONTROL", 58, 42);
+    ctx.fillStyle = "#f2f6fb";
+    ctx.font = "700 27px Inter, system-ui, sans-serif";
+    ctx.fillText("MISSION CONTROL", 62, 47);
 
     ctx.fillStyle = "rgba(183, 193, 207, 0.72)";
-    ctx.font = "13px ui-monospace, Menlo, monospace";
-    ctx.fillText("ORCHESTRATION OVERVIEW", 300, 41);
+    ctx.font = "14px ui-monospace, Menlo, monospace";
+    ctx.fillText("ORCHESTRATION OVERVIEW", 356, 45);
 
     ctx.fillStyle = "#6fe3a4";
-    ctx.font = "600 14px ui-monospace, Menlo, monospace";
-    ctx.fillText("SIMULATION MODE", 760, 41);
+    ctx.font = "700 14px ui-monospace, Menlo, monospace";
+    ctx.fillText("WORKFLOW ACTIVE", width - 214, 45);
 
-    // Workflow pipeline.
-    ctx.fillStyle = "rgba(183, 193, 207, 0.78)";
-    ctx.font = "600 13px Inter, system-ui, sans-serif";
-    ctx.fillText("WORKFLOW", 36, 108);
+    // Left: throughput bars for the seven workflow phases.
+    ctx.fillStyle = "rgba(183, 193, 207, 0.8)";
+    ctx.font = "700 15px Inter, system-ui, sans-serif";
+    ctx.fillText("WORKFLOW THROUGHPUT", 44, 116);
 
     const stages = [
-      "INTAKE",
-      "PLANNING",
-      "RESEARCH",
-      "BUILD",
-      "QA",
-      "REVIEW",
-      "DONE",
-    ];
-    const stageWidth = 130;
-    const stageHeight = 56;
-    const stageGap = 10;
-    stages.forEach((stage, index) => {
-      const x = 36 + index * (stageWidth + stageGap);
-      const y = 130;
-      ctx.fillStyle = "rgba(255, 255, 255, 0.035)";
-      ctx.fillRect(x, y, stageWidth, stageHeight);
-      ctx.strokeStyle = "rgba(124, 196, 214, 0.18)";
-      ctx.strokeRect(x + 0.5, y + 0.5, stageWidth - 1, stageHeight - 1);
-      ctx.fillStyle = "rgba(238, 242, 247, 0.9)";
+      ["INTAKE", 0.38, "#4f7fa0"],
+      ["PLANNING", 0.6, "#5c94b8"],
+      ["RESEARCH", 0.47, "#5cc8d7"],
+      ["BUILD", 0.92, "#6c9eff"],
+      ["QA", 0.71, "#5fd39a"],
+      ["REVIEW", 0.54, "#f08a7e"],
+      ["DONE", 0.34, "#7cc4d6"],
+    ] as const;
+    const barWidth = 58;
+    const barGap = 34;
+    const barLeft = 48;
+    const baseY = 392;
+    const maxBar = 196;
+
+    ctx.strokeStyle = "rgba(124, 196, 214, 0.16)";
+    ctx.lineWidth = 1;
+    for (let step = 0; step <= 3; step += 1) {
+      const y = baseY - (step / 3) * maxBar;
+      ctx.beginPath();
+      ctx.moveTo(40, y + 0.5);
+      ctx.lineTo(730, y + 0.5);
+      ctx.stroke();
+    }
+
+    stages.forEach(([label, value, color], index) => {
+      const x = barLeft + index * (barWidth + barGap);
+      const barHeight = 24 + value * maxBar;
+      const gradient = ctx.createLinearGradient(0, baseY - barHeight, 0, baseY);
+      gradient.addColorStop(0, color);
+      gradient.addColorStop(1, "rgba(24, 42, 58, 0.65)");
+      ctx.fillStyle = gradient;
+      ctx.fillRect(x, baseY - barHeight, barWidth, barHeight);
+      ctx.fillStyle = "rgba(255, 255, 255, 0.16)";
+      ctx.fillRect(x, baseY - barHeight, barWidth, 3);
+
+      ctx.fillStyle = "rgba(226, 236, 246, 0.92)";
       ctx.font = "600 14px ui-monospace, Menlo, monospace";
-      ctx.fillText(stage, x + 14, y + 25);
-      ctx.fillStyle = "rgba(124, 196, 214, 0.65)";
-      ctx.fillRect(x + 14, y + 34, 26 + ((index * 13) % 54), 3);
+      ctx.fillText(String(Math.round(value * 10)), x, baseY - barHeight - 10);
+
+      ctx.fillStyle = "rgba(166, 182, 199, 0.85)";
+      ctx.font = "600 13px ui-monospace, Menlo, monospace";
+      ctx.fillText(label, x, baseY + 24);
     });
 
-    ctx.fillStyle = "rgba(183, 193, 207, 0.62)";
-    ctx.font = "13px Inter, system-ui, sans-serif";
-    ctx.fillText("Agents pick up queued tasks automatically", 36, 214);
+    // Right: the team roster straight from the agent registry.
+    ctx.strokeStyle = "rgba(124, 196, 214, 0.16)";
+    ctx.beginPath();
+    ctx.moveTo(766, 100);
+    ctx.lineTo(766, height - 36);
+    ctx.stroke();
 
-    // Roster.
-    ctx.fillStyle = "rgba(183, 193, 207, 0.78)";
-    ctx.font = "600 13px Inter, system-ui, sans-serif";
-    ctx.fillText("TEAM", 36, 266);
+    ctx.fillStyle = "rgba(183, 193, 207, 0.8)";
+    ctx.font = "700 15px Inter, system-ui, sans-serif";
+    ctx.fillText("TEAM", 800, 116);
 
-    const roster = [
-      ["ORION", "Orchestrator", "#E8B04A"],
-      ["IRIS", "Researcher", "#5CC8D7"],
-      ["PIPER", "Product Manager", "#A78BFA"],
-      ["KAI", "Software Engineer", "#6C9EFF"],
-      ["QUINN", "QA Engineer", "#5FD39A"],
-      ["REX", "Code Reviewer", "#F08A7E"],
-    ];
-    roster.forEach(([name, role, color], index) => {
-      const column = index % 3;
-      const row = Math.floor(index / 3);
-      const x = 36 + column * 320;
-      const y = 292 + row * 54;
-      ctx.fillStyle = color;
-      ctx.fillRect(x, y - 12, 4, 26);
-      ctx.fillStyle = "rgba(238, 242, 247, 0.94)";
-      ctx.font = "600 15px Inter, system-ui, sans-serif";
-      ctx.fillText(name, x + 14, y + 4);
-      ctx.fillStyle = "rgba(148, 162, 180, 0.85)";
-      ctx.font = "12px Inter, system-ui, sans-serif";
-      ctx.fillText(role, x + 14, y + 22);
+    AGENT_IDS.forEach((id, index) => {
+      const agent = AGENT_BY_ID[id];
+      const y = 146 + index * 56;
+      ctx.fillStyle = agent.color;
+      ctx.fillRect(800, y - 18, 5, 32);
+
+      ctx.fillStyle = "rgba(238, 242, 247, 0.96)";
+      ctx.font = "700 21px Inter, system-ui, sans-serif";
+      ctx.fillText(agent.name.toUpperCase(), 818, y + 4);
+
+      ctx.fillStyle = "rgba(156, 172, 190, 0.86)";
+      ctx.font = "14px Inter, system-ui, sans-serif";
+      ctx.fillText(agent.roleLabel, 960, y + 4);
+
+      ctx.fillStyle = "rgba(124, 196, 214, 0.55)";
+      ctx.beginPath();
+      ctx.arc(1352, y - 2, 5, 0, Math.PI * 2);
+      ctx.fill();
     });
-
-    // Footer.
-    ctx.fillStyle = "rgba(6, 10, 15, 0.9)";
-    ctx.fillRect(0, height - 44, width, 44);
-    ctx.fillStyle = "rgba(148, 162, 180, 0.78)";
-    ctx.font = "12px ui-monospace, Menlo, monospace";
-    ctx.fillText(
-      "Deterministic local simulation  /  no model inference  /  no code execution",
-      36,
-      height - 18,
-    );
-    ctx.fillStyle = "rgba(124, 196, 214, 0.7)";
-    ctx.fillText("LINK  OK", width - 116, height - 18);
 
     return asColorMap(new THREE.CanvasTexture(canvas));
   });

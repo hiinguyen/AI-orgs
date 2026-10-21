@@ -225,29 +225,33 @@ function Skyline({ count }: { count: number }) {
     const random = makeRandom(0x20261018);
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();
-    const columns = count > 150 ? 16 : 12;
-    const spacingX = count > 150 ? 13 : 15;
-    const spacingZ = count > 150 ? 8.5 : 10;
+    // Every row stays in front of the sky plane at z = -78: 26 x 10 rows in
+    // high (260 towers) and 24 x 5 rows in low (120 towers) end near z = -69
+    // and z = -51. Narrower towers and tighter spacing give the back window a
+    // layered city instead of a few oversized facades.
+    const columns = count > 150 ? 26 : 24;
+    const spacingX = count > 150 ? 10.2 : 11.2;
+    const spacingZ = count > 150 ? 5.4 : 7.4;
     for (let index = 0; index < count; index += 1) {
       const column = index % columns;
       const row = Math.floor(index / columns);
-      const width = 6 + random() * 6;
-      const depth = 6 + random() * 6;
-      const height = 14 + random() * 32;
+      const width = 4 + random() * 4;
+      const depth = 4 + random() * 3;
+      const height = 14 + random() * 22;
       const x =
-        (column - (columns - 1) / 2) * spacingX + (random() - 0.5) * 2.4;
-      const z = -18 - row * spacingZ + (random() - 0.5) * 2.2;
+        (column - (columns - 1) / 2) * spacingX + (random() - 0.5) * 1.6;
+      const z = -20 - row * spacingZ + (random() - 0.5) * 1.4;
       dummy.position.set(x, height / 2 - 0.4, z);
-      dummy.rotation.set(0, (random() - 0.5) * 0.18, 0);
+      dummy.rotation.set(0, (random() - 0.5) * 0.14, 0);
       dummy.scale.set(width, height, depth);
       dummy.updateMatrix();
       target.setMatrixAt(index, dummy.matrix);
       const warm = random() > 0.58;
-      const bright = 0.82 + random() * 0.18;
+      const bright = 0.8 + random() * 0.2;
       color.setRGB(
-        bright * (warm ? 1.0 : 0.84),
-        bright * (warm ? 0.93 : 0.9),
-        bright * (warm ? 0.82 : 1.0),
+        bright * (warm ? 1.0 : 0.82),
+        bright * (warm ? 0.92 : 0.89),
+        bright * (warm ? 0.8 : 1.0),
       );
       target.setColorAt(index, color);
     }
@@ -357,6 +361,10 @@ function Dust({ count }: { count: number }) {
   useEffect(() => {
     geometry.setDrawRange(0, count);
   }, [count, geometry]);
+
+  // The dust buffer is built here, not in a shared pool, so this component owns
+  // its lifetime. StrictMode remounts create a fresh geometry.
+  useEffect(() => () => geometry.dispose(), [geometry]);
 
   const elapsed = useRef(0);
 

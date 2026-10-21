@@ -5,6 +5,7 @@ import { AGENT_BY_ID } from "@/agents/AgentRegistry";
 import { LOCATIONS, STATIONS, type StationId } from "@/simulation/worldLayout";
 import { useWorldStore } from "@/state/useWorldStore";
 import { STATION_OWNER_IDS } from "@/world/stationOwners";
+import { focusStation } from "@/world/stationFocus";
 import {
   AgentAvatar,
   AgentStatusPill,
@@ -34,7 +35,6 @@ export function StationDetails({ stationId }: { stationId: StationId }) {
       ? state.world?.tasks.find((entry) => entry.id === agent.currentTaskId)
       : undefined,
   );
-  const requestCamera = useWorldStore((state) => state.requestCamera);
   const selectAgent = useWorldStore((state) => state.selectAgent);
 
   if (!station) {
@@ -49,17 +49,6 @@ export function StationDetails({ stationId }: { stationId: StationId }) {
 
   const owner = AGENT_BY_ID[STATION_OWNER_IDS[stationId]];
   const zone = LOCATIONS[stationId]?.zone;
-
-  const focus = () => {
-    requestCamera({
-      focus: {
-        x: station.position.x,
-        y: 0.85,
-        z: station.position.z + 0.2,
-      },
-      distance: 8.5,
-    });
-  };
 
   return (
     <div className="px-4 py-3.5">
@@ -117,8 +106,11 @@ export function StationDetails({ stationId }: { stationId: StationId }) {
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" className="btn btn-ghost" onClick={focus}>
-          <Crosshair aria-hidden="true" />
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => focusStation(stationId)}
+        >          <Crosshair aria-hidden="true" />
           Focus camera
         </button>
         <button

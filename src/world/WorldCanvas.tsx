@@ -11,7 +11,6 @@ import { Workstations } from "./Workstations";
 import { CameraController } from "./CameraController";
 import { InteractionManager } from "./InteractionManager";
 import { CAMERA_FOV, INITIAL_CAMERA_POSITION } from "./cameraPresets";
-import { wasDragGesture } from "./pointerGesture";
 
 declare global {
   interface Window {
@@ -83,10 +82,6 @@ export function WorldCanvas() {
         onCreated={({ gl }) => {
           gl.toneMapping = THREE.ACESFilmicToneMapping;
           gl.toneMappingExposure = 1.15;
-        }}
-        onPointerMissed={() => {
-          if (wasDragGesture()) return;
-          useWorldStore.getState().clearSelection();
         }}
       >
         <color attach="background" args={["#080b10"]} />

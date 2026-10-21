@@ -1,26 +1,58 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
 import type { AgentState } from "@/agents/agentTypes";
 import { liveWorld, useWorldStore } from "@/state/useWorldStore";
 import type { CameraPresetId, ViewInsets } from "@/state/useWorldStore";
-import { CAMERA_FOV, CAMERA_LIMITS, CAMERA_PRESETS } from "./cameraPresets";
+import { CAMERA_LIMITS, CAMERA_PRESETS } from "./cameraPresets";
 
 const TARGET_LAMBDA = 4;
 const POSITION_LAMBDA = 2;
 const FOLLOW_LAMBDA = 4;
 
+/**
+ * Height reserved at the bottom of the free area for the floating camera bar.
+ * The bar lives inside the measured insets, so framing has to keep the office
+ * above it or the camera pills sit on top of the front of the floor.
+ */
+const CAMERA_BAR_CLEARANCE = 48;
+
 const scratchTarget = new THREE.Vector3();
 const scratchOffset = new THREE.Vector3();
+
+interface ViewportSize {
+  width: number;
+  height: number;
+}
+
+interface FreeArea {
+  width: number;
+  height: number;
+  centerX: number;
+  centerY: number;
+}
 
 interface MoveGoal {
   active: boolean;
   target: THREE.Vector3;
   position: THREE.Vector3;
+}
+
+function freeArea(size: ViewportSize, insets: ViewInsets): FreeArea {
+  const left = insets.left;
+  const right = size.width - insets.right;
+  const top = insets.top;
+  const bottom = size.height - insets.bottom - CAMERA_BAR_CLEARANCE;
+  return {
+    width: Math.max(1, right - left),
+    height: Math.max(1, bottom - top),
+    centerX: (left + right) / 2,
+    centerY: (top + bottom) / 2,
+  };
 }
 
 function clampTarget(target: THREE.Vector3): void {
@@ -47,31 +79,53 @@ function clampTarget(target: THREE.Vector3): void {
  * zoom-out; phones with a bottom sheet need the full clamp.
  */
 export function insetFitFactor(
-  size: { width: number; height: number },
+  size: ViewportSize,
   insets: ViewInsets,
 ): number {
-  const freeWidth = Math.max(1, size.width - insets.left - insets.right);
-  const freeHeight = Math.max(1, size.height - insets.top - insets.bottom);
-  const byWidth = (1.17 * size.height) / freeWidth;
-  const byHeight = (0.96 * size.height) / freeHeight;
+  const free = freeArea(size, insets);
+  const byWidth = (1.17 * size.height) / free.width;
+  const byHeight = (0.96 * size.height) / free.height;
   return THREE.MathUtils.clamp(Math.max(byWidth, byHeight), 1, 2.2);
 }
 
-function viewportSize(): { width: number; height: number } {
-  return {
-    width: window.innerWidth || 1,
-    height: window.innerHeight || 1,
-  };
+/**
+ * Shift the camera's projection so the orbit target lands in the middle of
+ * the free area instead of the middle of the canvas. The side panel and the
+ * mobile sheet cover part of the viewport, and the office has to be framed
+ * in what is left; moving the camera and target instead would push the orbit
+ * target outside the configured limits.
+ */
+export function applyViewOffset(
+  camera: THREE.Camera,
+  size: ViewportSize,
+  insets: ViewInsets,
+): void {
+  if (!(camera instanceof THREE.PerspectiveCamera)) return;
+  const free = freeArea(size, insets);
+  const offsetX = size.width / 2 - free.centerX;
+  const offsetY = size.height / 2 - free.centerY;
+  if (Math.abs(offsetX) < 0.5 && Math.abs(offsetY) < 0.5) {
+    camera.clearViewOffset();
+    return;
+  }
+  camera.setViewOffset(
+    size.width,
+    size.height,
+    offsetX,
+    offsetY,
+    size.width,
+    size.height,
+  );
 }
 
 function presetGoal(
   presetId: CameraPresetId,
   insets: ViewInsets,
+  size: ViewportSize,
   target: THREE.Vector3,
   position: THREE.Vector3,
 ): void {
   const preset = CAMERA_PRESETS[presetId];
-  const size = viewportSize();
   target.fromArray(preset.target);
   scratchOffset.fromArray(preset.position).sub(target);
   const baseDistance = scratchOffset.length();
@@ -80,18 +134,6 @@ function presetGoal(
     CAMERA_LIMITS.minDistance,
     CAMERA_LIMITS.maxDistance,
   );
-
-  // Center the framing in the free area, not the whole viewport: the side
-  // panel covers the right edge and the mobile bottom sheet the lower half.
-  const freeCenterX = (insets.left + (size.width - insets.right)) / 2;
-  const freeCenterY = (insets.top + (size.height - insets.bottom)) / 2;
-  const worldPerPixel =
-    (2 * distance * Math.tan(THREE.MathUtils.degToRad(CAMERA_FOV / 2))) /
-    size.height;
-  const shiftScale = worldPerPixel * 0.85;
-  target.x += (size.width / 2 - freeCenterX) * shiftScale;
-  target.z += (size.height / 2 - freeCenterY) * shiftScale;
-
   scratchOffset.normalize().multiplyScalar(distance);
   position.copy(target).add(scratchOffset);
   clampTarget(target);
@@ -100,6 +142,9 @@ function presetGoal(
 export function CameraController() {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const request = useWorldStore((state) => state.camera);
+  const insets = useWorldStore((state) => state.viewInsets);
+  const camera = useThree((state) => state.camera);
+  const size = useThree((state) => state.size);
 
   const goal = useRef<MoveGoal>({
     active: false,
@@ -108,47 +153,63 @@ export function CameraController() {
   });
   const hasUserInteracted = useRef(false);
   const hasRequestedFraming = useRef(false);
+  const sizeRef = useRef<ViewportSize>(size);
+
+  useEffect(() => {
+    sizeRef.current = size;
+  }, [size]);
+
+  // Keep the projection centered on the free area whenever the measured UI
+  // insets or the canvas size change.
+  useEffect(() => {
+    applyViewOffset(camera, size, insets);
+  }, [camera, size, insets]);
 
   // Mount: place the orbit target on the overview target, then fit the same
-  // preset once the shell has measured its UI insets. The refit also runs on
-  // resize until the user first touches the camera, so a phone keeps the
-  // office inside the free area after rotating.
+  // preset once the shell has measured its UI insets.
   useEffect(() => {
     const controls = controlsRef.current;
     if (controls) {
       controls.target.fromArray(CAMERA_PRESETS.overview.target);
-      controls.update();
     }
     const frame = requestAnimationFrame(() => {
       if (hasRequestedFraming.current) return;
-      const current = controlsRef.current;
-      if (!current) return;
       const store = useWorldStore.getState();
       presetGoal(
         "overview",
         store.viewInsets,
+        sizeRef.current,
         goal.current.target,
         goal.current.position,
       );
       goal.current.active = true;
     });
-    const onResize = () => {
+    return () => cancelAnimationFrame(frame);
+  }, []);
+
+  // Refit while the user has neither orbited nor picked a camera: the mobile
+  // bottom sheet changes height with the tab content and the desktop panel
+  // can change width, so viewInsets moves after mount.
+  useEffect(() => {
+    const refit = () => {
       if (hasUserInteracted.current || hasRequestedFraming.current) return;
       const store = useWorldStore.getState();
       presetGoal(
         "overview",
         store.viewInsets,
+        sizeRef.current,
         goal.current.target,
         goal.current.position,
       );
       goal.current.active = true;
     };
-    window.addEventListener("resize", onResize);
-    return () => {
-      cancelAnimationFrame(frame);
-      window.removeEventListener("resize", onResize);
-    };
-  }, []);
+
+    const unsubscribe = useWorldStore.subscribe((state, previous) => {
+      if (state.viewInsets !== previous.viewInsets) refit();
+    });
+    refit();
+    return unsubscribe;
+  }, [size]);
 
   // A new store request starts a damped move towards the requested framing.
   useEffect(() => {
@@ -162,6 +223,7 @@ export function CameraController() {
       presetGoal(
         request.preset,
         useWorldStore.getState().viewInsets,
+        sizeRef.current,
         goal.current.target,
         goal.current.position,
       );
@@ -193,6 +255,9 @@ export function CameraController() {
     }
   }, [request]);
 
+  // Priority -2 runs before drei's OrbitControls update (-1), so the controls
+  // apply this frame's goal in their single damping step. Do not call
+  // controls.update() here: it would advance the damping twice per frame.
   useFrame((state, delta) => {
     const controls = controlsRef.current;
     if (!controls) return;
@@ -291,8 +356,7 @@ export function CameraController() {
     }
 
     clampTarget(controls.target);
-    controls.update();
-  });
+  }, -2);
 
   return (
     <OrbitControls

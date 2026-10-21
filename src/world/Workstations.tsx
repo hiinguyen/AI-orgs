@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useLayoutEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import {
@@ -64,17 +64,13 @@ function Desks() {
   const contact = useRef<THREE.InstancedMesh>(null);
   const pools = useRef<THREE.InstancedMesh>(null);
 
-  const stripMaterial = useMemo(
+  const stripMaterial = sharedMaterial(
+    "desk-accent-strips",
     () =>
-      sharedMaterial(
-        "desk-accent-strips",
-        () =>
-          new THREE.MeshBasicMaterial({
-            color: "#ffffff",
-            toneMapped: false,
-          }),
-      ),
-    [],
+      new THREE.MeshBasicMaterial({
+        color: "#ffffff",
+        toneMapped: false,
+      }),
   );
 
   useLayoutEffect(() => {
@@ -274,6 +270,13 @@ function OperationsHub() {
         rotation-x={-Math.PI / 2}
         scale={[4.6, 4.6, 1]}
       />
+      <mesh
+        geometry={geometries.plane}
+        material={materials.glowCool}
+        position={[0, 0.015, 0]}
+        rotation-x={-Math.PI / 2}
+        scale={[16, 16, 1]}
+      />
     </group>
   );
 }
@@ -284,35 +287,37 @@ function MissionControl() {
       <mesh
         geometry={geometries.box}
         material={materials.screenFrame}
-        position={[0, 2.5, -0.18]}
-        scale={[5.72, 2.5, 0.22]}
+        position={[0, 2.6, -0.18]}
+        scale={[8.36, 3.24, 0.22]}
         castShadow
       />
       <mesh
         geometry={geometries.plane}
         material={materials.missionScreen}
-        position={[0, 2.5, -0.06]}
-        scale={[5.36, 2.16, 1]}
+        position={[0, 2.6, -0.06]}
+        scale={[8.0, 2.9, 1]}
       />
       <mesh
         geometry={geometries.box}
         material={materials.metal}
-        position={[0, 0.66, -0.55]}
-        scale={[5.9, 0.18, 0.95]}
+        position={[0, 0.78, -0.55]}
+        scale={[8.5, 0.14, 1.0]}
         castShadow
         receiveShadow
       />
       <mesh
         geometry={geometries.box}
-        material={materials.metal}
-        position={[-2.45, 0.675, -0.32]}
-        scale={[0.14, 1.35, 0.14]}
+        material={materials.wallPanel}
+        position={[0, 0.38, -0.6]}
+        scale={[8.3, 0.72, 0.9]}
+        castShadow
+        receiveShadow
       />
       <mesh
-        geometry={geometries.box}
-        material={materials.metal}
-        position={[2.45, 0.675, -0.32]}
-        scale={[0.14, 1.35, 0.14]}
+        geometry={geometries.plane}
+        material={materials.hubAccent}
+        position={[0, 0.5, -0.16]}
+        scale={[7.2, 0.03, 1]}
       />
     </group>
   );
@@ -471,7 +476,6 @@ export function Workstations() {
       <PlanningBoard />
       <CollabTable />
       <Lounge />
-
     </group>
   );
 }

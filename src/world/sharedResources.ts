@@ -157,6 +157,12 @@ export const geometries = {
       () => new THREE.SphereGeometry(0.5, 24, 16),
     );
   },
+  get capsule(): THREE.CapsuleGeometry {
+    return sharedGeometry(
+      "capsule",
+      () => new THREE.CapsuleGeometry(0.5, 1, 8, 16),
+    );
+  },
   get cylinder(): THREE.CylinderGeometry {
     return sharedGeometry(
       "cylinder",
@@ -167,6 +173,12 @@ export const geometries = {
     return sharedGeometry(
       "torus",
       () => new THREE.TorusGeometry(1, 0.012, 8, 128),
+    );
+  },
+  get ring(): THREE.RingGeometry {
+    return sharedGeometry(
+      "ring",
+      () => new THREE.RingGeometry(0.5, 0.56, 64),
     );
   },
   get deskSlab(): RoundedBoxGeometry {
@@ -250,10 +262,9 @@ export const materials = {
       () =>
         new THREE.MeshStandardMaterial({
           map: floorTexture(),
-          color: "#93a2b4",
-          roughness: 0.38,
-          metalness: 0.24,
-          envMapIntensity: 0.9,
+          color: "#c6d4e4",
+          roughness: 0.46,
+          metalness: 0.18,
         }),
     );
   },
@@ -315,7 +326,6 @@ export const materials = {
           clearcoatRoughness: 0.12,
           side: THREE.DoubleSide,
           depthWrite: false,
-          envMapIntensity: 1.1,
         }),
     );
   },
@@ -331,7 +341,6 @@ export const materials = {
           metalness: 0,
           side: THREE.DoubleSide,
           depthWrite: false,
-          envMapIntensity: 1.2,
         }),
     );
   },
@@ -343,7 +352,6 @@ export const materials = {
           color: "#d9dfe7",
           roughness: 0.5,
           metalness: 0.1,
-          envMapIntensity: 0.75,
         }),
     );
   },
@@ -388,7 +396,6 @@ export const materials = {
           color: "#cfd5dc",
           roughness: 0.55,
           metalness: 0.16,
-          envMapIntensity: 0.8,
         }),
     );
   },
@@ -399,10 +406,10 @@ export const materials = {
         map: texture,
         emissiveMap: texture,
         emissive: "#ffffff",
-        emissiveIntensity: 0.46,
-        color: "#93a5ba",
-        roughness: 0.92,
-        metalness: 0.18,
+        emissiveIntensity: 0.85,
+        color: "#aab7c8",
+        roughness: 0.9,
+        metalness: 0.12,
       });
     });
   },
@@ -413,10 +420,10 @@ export const materials = {
         map: texture,
         emissiveMap: texture,
         emissive: "#ffffff",
-        emissiveIntensity: 0.72,
-        color: "#0a111b",
-        roughness: 0.46,
-        metalness: 0.2,
+        emissiveIntensity: 1.05,
+        color: "#ffffff",
+        roughness: 0.42,
+        metalness: 0.16,
       });
     });
   },
@@ -465,11 +472,60 @@ export const materials = {
       () =>
         new THREE.MeshBasicMaterial({
           map: glowTexture(),
+          color: "#ffce92",
           transparent: true,
           opacity: 0.28,
           depthWrite: false,
           blending: THREE.AdditiveBlending,
           toneMapped: false,
+        }),
+    );
+  },
+  get glowCool(): THREE.MeshBasicMaterial {
+    return sharedMaterial(
+      "glow-cool",
+      () =>
+        new THREE.MeshBasicMaterial({
+          map: glowTexture(),
+          color: "#7cc4d6",
+          transparent: true,
+          opacity: 0.16,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          toneMapped: false,
+        }),
+    );
+  },
+  get ceramic(): THREE.MeshStandardMaterial {
+    return sharedMaterial(
+      "ceramic",
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: "#e6ebf2",
+          roughness: 0.42,
+          metalness: 0.06,
+        }),
+    );
+  },
+  get joint(): THREE.MeshStandardMaterial {
+    return sharedMaterial(
+      "joint",
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: "#141b25",
+          roughness: 0.48,
+          metalness: 0.62,
+        }),
+    );
+  },
+  get screenOff(): THREE.MeshStandardMaterial {
+    return sharedMaterial(
+      "screen-off",
+      () =>
+        new THREE.MeshStandardMaterial({
+          color: "#05080d",
+          roughness: 0.24,
+          metalness: 0.38,
         }),
     );
   },

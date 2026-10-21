@@ -12,20 +12,14 @@ import {
   stationIdFromTarget,
   stationTarget,
 } from "./stationOwners";
-import { installPointerGesture, wasDragGesture } from "./pointerGesture";
+import { focusStation } from "./stationFocus";
+import {
+  consumeClickGesture,
+  installPointerGesture,
+  wasDragGesture,
+} from "./pointerGesture";
 
 const HOVER_COLOR = "#9ad7e6";
-const FOCUS_DISTANCE = 8.5;
-
-function stationFocusPoint(id: StationId): { x: number; y: number; z: number } {
-  const station = STATIONS.find((entry) => entry.id === id);
-  if (!station) return { x: 0, y: 0.8, z: 0 };
-  return {
-    x: station.position.x,
-    y: 0.85,
-    z: station.position.z + 0.2,
-  };
-}
 
 /**
  * Invisible hit boxes for the six desks, the shared click-vs-orbit gesture,
@@ -41,7 +35,11 @@ export function InteractionManager() {
 
   useEffect(() => {
     const element = gl.domElement;
-    const removeGesture = installPointerGesture(element);
+    const removeGesture = installPointerGesture(element, {
+      onEmptyClick: () => {
+        useWorldStore.getState().clearSelection();
+      },
+    });
     const onLeave = () => {
       useWorldStore.getState().setHovered(null);
       element.style.cursor = "";
@@ -73,13 +71,10 @@ export function InteractionManager() {
 
   const clicked = (id: StationId) => (event: ThreeEvent<MouseEvent>) => {
     if (wasDragGesture()) return;
+    consumeClickGesture();
     event.stopPropagation();
-    const store = useWorldStore.getState();
-    store.selectStation(id);
-    store.requestCamera({
-      focus: stationFocusPoint(id),
-      distance: FOCUS_DISTANCE,
-    });
+    useWorldStore.getState().selectStation(id);
+    focusStation(id);
   };
 
   const hoverStation = stationIdFromTarget(hovered);

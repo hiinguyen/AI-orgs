@@ -2,13 +2,14 @@
 
 import { Environment, Lightformer } from "@react-three/drei";
 import { useWorldStore } from "@/state/useWorldStore";
-import { STATIONS } from "@/simulation/worldLayout";
 
 /**
  * Blue-hour exterior plus warm interior. One shadow-casting directional light
  * covers the floor with a tight orthographic frustum; every other light is a
- * cheap fill with no shadow map. The PBR environment is baked from
- * Lightformers, so no HDR file is downloaded.
+ * cheap fill with no shadow map. High quality keeps two broad zone lights over
+ * the desk banks; low quality drops them and lets the emissive desk pools
+ * carry the warmth. The PBR environment is baked from Lightformers, so no HDR
+ * file is downloaded.
  */
 export function Lighting() {
   const quality = useWorldStore((state) => state.quality);
@@ -17,14 +18,14 @@ export function Lighting() {
   return (
     <>
       <hemisphereLight
-        args={["#7d95b5", "#070a0f", 0.9]}
+        args={["#8fa8c8", "#0a1018", 1.55]}
         position={[0, 12, 0]}
       />
 
       <directionalLight
         castShadow={high}
         color="#b9cdf0"
-        intensity={1.75}
+        intensity={1.9}
         position={[-6, 16, -7]}
         shadow-mapSize-width={2048}
         shadow-mapSize-height={2048}
@@ -47,16 +48,24 @@ export function Lighting() {
         position={[0, 2.1, -0.6]}
       />
 
-      {STATIONS.map((station) => (
-        <pointLight
-          key={station.id}
-          color="#ffd2a0"
-          intensity={6}
-          distance={4}
-          decay={2}
-          position={[station.position.x, 2.3, station.position.z + 0.25]}
-        />
-      ))}
+      {high && (
+        <>
+          <pointLight
+            color="#ffd2a0"
+            intensity={22}
+            distance={9}
+            decay={2}
+            position={[-8.25, 2.6, -3.6]}
+          />
+          <pointLight
+            color="#ffd2a0"
+            intensity={22}
+            distance={9}
+            decay={2}
+            position={[8.25, 2.6, -3.6]}
+          />
+        </>
+      )}
 
       <pointLight
         color="#ffbf86"
@@ -70,7 +79,7 @@ export function Lighting() {
         <Environment
           resolution={128}
           frames={1}
-          environmentIntensity={0.55}
+          environmentIntensity={0.9}
         >
           <Lightformer
             form="rect"
