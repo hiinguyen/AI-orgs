@@ -213,6 +213,21 @@ export function legLength(rig: AgentRig): number {
   return rig.hipHeight * rig.scale;
 }
 
+/** Everything the animator needs to know about a rig. */
+export interface AnimatorInputs {
+  /** Drawn leg length, so the gait stride matches the character's stride. */
+  legLength: number;
+}
+
+/**
+ * Rig to animator boundary. `AgentCharacter` passes these inputs straight to
+ * `AgentAnimator.update`; keeping the mapping here means a rig change cannot
+ * silently desync the gait from the drawn legs.
+ */
+export function animatorInputsFor(rig: AgentRig): AnimatorInputs {
+  return { legLength: legLength(rig) };
+}
+
 /**
  * Lateral distance between the hands when both arms are rotated inwards by
  * `armZ` radians. The Z rotation moves a hand by `armLength * sin(armZ)`

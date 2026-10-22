@@ -5,9 +5,10 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { AgentId } from "@/agents/agentTypes";
 import { AGENT_BY_ID } from "@/agents/AgentRegistry";
-import type { CommLink, WorldSnapshot } from "@/integrations/AgentBackend";
+import type { CommLink } from "@/integrations/AgentBackend";
 import { liveWorld } from "@/state/useWorldStore";
 import { agentVisuals } from "./agentVisuals";
+import { syncCommClock, type CommClockState } from "./commClock";
 import { geometries, sharedMaterial } from "./sharedResources";
 
 /**
@@ -32,11 +33,6 @@ const ASSIGN_RIBBON_WIDTH = 0.02;
 const ARC_HEIGHT = 0.45;
 /** Instance scale of the shared 0.5 m sphere: 0.09 reads as a 9 cm dot. */
 const PACKET_SCALE = 0.09;
-/**
- * A snapshot clock that moves further than this against the interpolated
- * clock is a reset or a demo restart, not a late frame, so the clock snaps.
- */
-const CLOCK_SNAP_SECONDS = 1;
 
 /**
  * Packets launch in a stagger and travel for the rest of the link, so none
@@ -103,11 +99,6 @@ interface LinkSlot {
   mesh: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
   position: THREE.BufferAttribute;
   color: THREE.BufferAttribute;
-}
-
-interface LinkClock {
-  clock: number;
-  snapshot: WorldSnapshot | null;
 }
 
 function createSlot(index: number): LinkSlot {
@@ -201,33 +192,6 @@ function selectLinks(links: readonly CommLink[], clock: number): number {
     linkOrder[slot + 1] = current;
   }
   return Math.min(MAX_LINKS, linkOrder.length);
-}
-
-/**
- * Interpolate the 30 Hz backend clock between snapshots. While running the
- * interpolated clock only moves forward; a snapshot that arrives slightly
- * behind it re-syncs with `max`. A large jump (reset, demo restart) or a
- * non-running snapshot snaps instead.
- */
-function advanceClock(
-  snapshot: WorldSnapshot,
-  state: LinkClock,
-  delta: number,
-): void {
-  if (snapshot !== state.snapshot) {
-    state.snapshot = snapshot;
-    const jump = snapshot.clock - state.clock;
-    if (
-      snapshot.status !== "running" ||
-      Math.abs(jump) > CLOCK_SNAP_SECONDS
-    ) {
-      state.clock = snapshot.clock;
-    } else {
-      state.clock = Math.max(state.clock, snapshot.clock);
-    }
-  } else if (snapshot.status === "running") {
-    state.clock += delta * snapshot.speed;
-  }
 }
 
 function clearPacket(mesh: THREE.InstancedMesh, index: number): void {
@@ -375,7 +339,7 @@ function writePackets(
 export function CommLinks() {
   const packets = useRef<THREE.InstancedMesh>(null);
   const slots = useMemo(() => createSlots(), []);
-  const clock = useRef<LinkClock>({ clock: 0, snapshot: null });
+  const clock = useRef<CommClockState>({ clock: 0, sample: null });
 
   useLayoutEffect(() => {
     const mesh = packets.current;
@@ -408,7 +372,7 @@ export function CommLinks() {
     const snapshot = liveWorld.current;
     if (!snapshot) return;
 
-    advanceClock(snapshot, clock.current, delta);
+    syncCommClock(clock.current, snapshot, delta);
     const active = selectLinks(snapshot.links, clock.current.clock);
 
     for (let slotIndex = 0; slotIndex < MAX_LINKS; slotIndex += 1) {

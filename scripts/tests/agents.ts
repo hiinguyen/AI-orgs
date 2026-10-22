@@ -1,13 +1,15 @@
 /**
  * Phase 4 checks for the pure agent modules: the rig table, accessory layout,
- * gait, pose blending, heading damping and label scale. These are the parts of
- * the 3D layer that can run without a renderer, so `npm test` catches them in
- * Node. Each topic has its own suite; `runAgentsSuite` is the entry point.
+ * gait, pose blending, heading damping, label scale and the comm-link clock.
+ * These are the parts of the 3D layer that can run without a renderer, so
+ * `npm test` catches them in Node. Each topic has its own suite; `runAgentsSuite`
+ * is the entry point.
  */
 import {
   AGENT_RIGS,
   ACCESSORY_KINDS,
   ARM_SPREAD,
+  animatorInputsFor,
   chestHeight,
   handSpread,
   headTopHeight,
@@ -25,7 +27,6 @@ import {
 import {
   ANIMATION_STATES,
   AgentAnimator,
-  DEFAULT_LEG_LENGTH,
   MAX_ARM_SWING,
   MAX_LEG_SWING,
   MAX_WALK_CADENCE,
@@ -48,6 +49,11 @@ import {
   normalizeAngle,
   shortestAngleDelta,
 } from "../../src/agents/agentMath.ts";
+import {
+  syncCommClock,
+  type CommClockSample,
+  type CommClockState,
+} from "../../src/world/commClock.ts";
 import type { TestReporter } from "./harness.ts";
 
 const ROLES: readonly AgentRole[] = [
@@ -62,6 +68,9 @@ const ROLES: readonly AgentRole[] = [
 /** Shortest drawn leg, the worst case for the cadence cap. */
 const GAIT_LEG_LENGTH = legLength(AGENT_RIGS.qa);
 
+/** One render frame at 60 fps, the display clock's nominal step. */
+const FRAME_SECONDS = 1 / 60;
+
 function close(a: number, b: number, tolerance = 1e-6): boolean {
   return Math.abs(a - b) <= tolerance;
 }
@@ -70,10 +79,9 @@ function finitePose(pose: ReturnType<typeof createPose>): boolean {
   return Object.values(pose).every((value) => Number.isFinite(value));
 }
 
-function runRigSuite(reporter: TestReporter): void {
-  const { check, group } = reporter;
+function runRigTableChecks(reporter: TestReporter): void {
+  const { check } = reporter;
 
-  group("Agent rigs");
   check(
     "one rig per role, keyed by role",
     ROLES.every((role) => AGENT_RIGS[role]?.role === role) &&
@@ -88,6 +96,37 @@ function runRigSuite(reporter: TestReporter): void {
       );
     }),
   );
+  check(
+    "all six accessories are distinct silhouettes",
+    new Set(ROLES.map((role) => AGENT_RIGS[role].accessory)).size === 6 &&
+      ACCESSORY_KINDS.length === 6,
+  );
+  check(
+    "torso, head, arm and leg dimensions are positive",
+    ROLES.every((role) => {
+      const rig = AGENT_RIGS[role];
+      return (
+        rig.torsoWidth > 0 &&
+        rig.torsoHeight > 0 &&
+        rig.torsoDepth > 0 &&
+        rig.headWidth > 0 &&
+        rig.headHeight > 0 &&
+        rig.headDepth > 0 &&
+        rig.armLength > 0 &&
+        rig.armRadius > 0 &&
+        rig.legRadius > 0
+      );
+    }),
+  );
+  check(
+    "rigFor returns the same table entry",
+    ROLES.every((role) => rigFor(role) === AGENT_RIGS[role]),
+  );
+}
+
+function runRigHeightChecks(reporter: TestReporter): void {
+  const { check } = reporter;
+
   check(
     "label height after scale stays within 1.85-2.05 m",
     ROLES.every((role) => {
@@ -120,6 +159,11 @@ function runRigSuite(reporter: TestReporter): void {
       return `${role}:${((rig.labelY - rig.headTopY) * rig.scale).toFixed(3)}`;
     }).join(" "),
   );
+}
+
+function runRigOrderChecks(reporter: TestReporter): void {
+  const { check } = reporter;
+
   check(
     "head top is above the head sphere centre",
     ROLES.every((role) => {
@@ -154,31 +198,26 @@ function runRigSuite(reporter: TestReporter): void {
     }),
   );
   check(
-    "all six accessories are distinct silhouettes",
-    new Set(ROLES.map((role) => AGENT_RIGS[role].accessory)).size === 6 &&
-      ACCESSORY_KINDS.length === 6,
-  );
-  check(
-    "torso, head, arm and leg dimensions are positive",
+    "rig to animator inputs use the drawn leg length",
     ROLES.every((role) => {
       const rig = AGENT_RIGS[role];
+      const inputs = animatorInputsFor(rig);
       return (
-        rig.torsoWidth > 0 &&
-        rig.torsoHeight > 0 &&
-        rig.torsoDepth > 0 &&
-        rig.headWidth > 0 &&
-        rig.headHeight > 0 &&
-        rig.headDepth > 0 &&
-        rig.armLength > 0 &&
-        rig.armRadius > 0 &&
-        rig.legRadius > 0
+        close(inputs.legLength, legLength(rig)) &&
+        close(inputs.legLength, rig.hipHeight * rig.scale)
       );
     }),
+    ROLES.map(
+      (role) => `${role}:${animatorInputsFor(AGENT_RIGS[role]).legLength.toFixed(3)}`,
+    ).join(" "),
   );
-  check(
-    "rigFor returns the same table entry",
-    ROLES.every((role) => rigFor(role) === AGENT_RIGS[role]),
-  );
+}
+
+function runRigSuite(reporter: TestReporter): void {
+  reporter.group("Agent rigs");
+  runRigTableChecks(reporter);
+  runRigHeightChecks(reporter);
+  runRigOrderChecks(reporter);
 }
 
 function runLayoutSuite(reporter: TestReporter): void {
@@ -224,7 +263,7 @@ function runLayoutSuite(reporter: TestReporter): void {
   );
 }
 
-function runGaitSuite(reporter: TestReporter): void {
+function runWalkPoseChecks(reporter: TestReporter): void {
   const { check, group } = reporter;
 
   group("Agent gait");
@@ -281,7 +320,12 @@ function runGaitSuite(reporter: TestReporter): void {
       `leg ${peakLeg.toFixed(3)} arm ${peakArm.toFixed(3)}`,
     );
   }
+}
 
+function runStrideChecks(reporter: TestReporter): void {
+  const { check, group } = reporter;
+
+  group("Agent stride");
   {
     const cadences: string[] = [];
     const planted = ROLES.every((role) => {
@@ -320,7 +364,12 @@ function runGaitSuite(reporter: TestReporter): void {
       `${walkCadence4x.toFixed(2)} steps/s covers ${(walkCadence4x * strideAt4x).toFixed(2)} m/s`,
     );
   }
+}
 
+function runWalkPhaseChecks(reporter: TestReporter): void {
+  const { check, group } = reporter;
+
+  group("Agent gait phase");
   {
     const animator = new AgentAnimator();
     const step = 1 / 60;
@@ -355,19 +404,23 @@ function runGaitSuite(reporter: TestReporter): void {
   }
 }
 
-function runAnimatorSuite(reporter: TestReporter): void {
+function runGaitSuite(reporter: TestReporter): void {
+  runWalkPoseChecks(reporter);
+  runStrideChecks(reporter);
+  runWalkPhaseChecks(reporter);
+}
+
+function runPoseShapeChecks(reporter: TestReporter): void {
   const { check, group } = reporter;
 
-  group("Agent pose blending");
+  group("Agent pose shapes");
   check(
     "createPose starts at rest",
     Object.values(createPose()).every((value) => value === 0),
   );
   check(
     "every state writes a finite pose",
-    ANIMATION_STATES.every((state) =>
-      finitePose(poseFor(state, 0.7, 2.4)),
-    ),
+    ANIMATION_STATES.every((state) => finitePose(poseFor(state, 0.7, 2.4))),
   );
   check(
     "typing hands sit 0.30-0.35 m apart, inside the shoulders",
@@ -392,6 +445,22 @@ function runAnimatorSuite(reporter: TestReporter): void {
     poseFor("error", 0.4, 0).bodyLift >= 0 &&
       poseFor("error", 0.4, 0).headPitch > poseFor("idle", 0.4, 0).headPitch,
   );
+  {
+    const scratch = createPose();
+    poseForState("success", scratch, 0.5, 0);
+    const first = scratch.bodyLift;
+    poseForState("error", scratch, 0.5, 0);
+    check(
+      "poseForState overwrites every field instead of accumulating",
+      scratch.bodyLift !== first && finitePose(scratch),
+    );
+  }
+}
+
+function runPoseBlendChecks(reporter: TestReporter): void {
+  const { check, group } = reporter;
+
+  group("Agent pose blending");
   {
     const animator = new AgentAnimator();
     const initial = animator.weights.idle;
@@ -431,6 +500,12 @@ function runAnimatorSuite(reporter: TestReporter): void {
     );
     check("blended pose stays finite", finitePose(animator.pose));
   }
+}
+
+function runAnimationClockChecks(reporter: TestReporter): void {
+  const { check, group } = reporter;
+
+  group("Agent animation clock");
   {
     const frozen = new AgentAnimator();
     const running = new AgentAnimator();
@@ -444,22 +519,23 @@ function runAnimatorSuite(reporter: TestReporter): void {
       `${frozen.time.toFixed(3)} vs ${running.time.toFixed(3)}`,
     );
   }
-  {
-    const scratch = createPose();
-    poseForState("success", scratch, 0.5, 0);
-    const first = scratch.bodyLift;
-    poseForState("error", scratch, 0.5, 0);
-    check(
-      "poseForState overwrites every field instead of accumulating",
-      scratch.bodyLift !== first && finitePose(scratch),
-    );
-  }
+  check(
+    "frozen animation time scale is 0.15",
+    close(animationTimeScale(true), 0.15) &&
+      close(animationTimeScale(false), 1),
+  );
 }
 
-function runLabelSuite(reporter: TestReporter): void {
+function runAnimatorSuite(reporter: TestReporter): void {
+  runPoseShapeChecks(reporter);
+  runPoseBlendChecks(reporter);
+  runAnimationClockChecks(reporter);
+}
+
+function runMotionSuite(reporter: TestReporter): void {
   const { check, group } = reporter;
 
-  group("Agent motion and labels");
+  group("Agent motion");
   check(
     "shortest heading delta wraps across +/- PI",
     close(shortestAngleDelta(3, -3), 2 * Math.PI - 6, 1e-6) &&
@@ -497,6 +573,12 @@ function runLabelSuite(reporter: TestReporter): void {
     "teleport detection triggers over 4 m",
     isTeleport(0, 0, 4.1, 0) && !isTeleport(0, 0, 3.9, 0),
   );
+}
+
+function runLabelScaleSuite(reporter: TestReporter): void {
+  const { check, group } = reporter;
+
+  group("Agent labels");
   check(
     "label scale clamps to 0.72-1.05",
     close(labelScale(40, 4), LABEL_SCALE_MAX) &&
@@ -520,11 +602,138 @@ function runLabelSuite(reporter: TestReporter): void {
         : labelScale(40, distance) <= labelScale(40, list[index - 1]),
     ),
   );
+}
+
+/**
+ * Run a snapshot stream whose clock advances `rate` times wall time, with a
+ * new snapshot every `snapshotEvery` frames.
+ */
+function runSlowerBackend(
+  rate: number,
+  snapshotEvery: number,
+  frames: number,
+): number {
+  const state: CommClockState = { clock: 0, sample: null };
+  let backend = 0;
+  let sample: CommClockSample = { clock: backend, status: "running", speed: 1 };
+  syncCommClock(state, sample, FRAME_SECONDS);
+  let maxError = 0;
+  for (let index = 0; index < frames; index += 1) {
+    backend += FRAME_SECONDS * rate;
+    if (index % snapshotEvery === 0) {
+      sample = { clock: backend, status: "running", speed: 1 };
+    }
+    syncCommClock(state, sample, FRAME_SECONDS);
+    maxError = Math.max(maxError, Math.abs(state.clock - backend));
+  }
+  return maxError;
+}
+
+function runClockDriftChecks(reporter: TestReporter): void {
+  const { check } = reporter;
+
+  const maxError = runSlowerBackend(0.5, 3, 60 * 5);
   check(
-    "frozen animation time scale is 0.15",
-    close(animationTimeScale(true), 0.15) &&
-      close(animationTimeScale(false), 1),
+    "a backend slower than wall time holds the clock within 100 ms",
+    maxError < 0.1,
+    `largest error ${(maxError * 1000).toFixed(1)} ms`,
   );
+}
+
+function runClockBackwardResetChecks(reporter: TestReporter): void {
+  const { check } = reporter;
+
+  const state: CommClockState = { clock: 0, sample: null };
+  let backend = 0;
+  let sample: CommClockSample = { clock: backend, status: "running", speed: 1 };
+  syncCommClock(state, sample, FRAME_SECONDS);
+  for (let index = 0; index < 30; index += 1) {
+    backend += FRAME_SECONDS;
+    if (index % 2 === 0) {
+      sample = { clock: backend, status: "running", speed: 1 };
+    }
+    syncCommClock(state, sample, FRAME_SECONDS);
+  }
+
+  // A demo restart that rewinds the backend clock by less than the snap
+  // threshold: the display clock must ease back, not jump.
+  backend -= 0.08;
+  sample = { clock: backend, status: "running", speed: 1 };
+  let maxBackstep = 0;
+  let frames = 0;
+  for (let index = 0; index < 60; index += 1) {
+    const previous = state.clock;
+    if (index > 0) {
+      backend += FRAME_SECONDS;
+      if (index % 2 === 0) {
+        sample = { clock: backend, status: "running", speed: 1 };
+      }
+    }
+    syncCommClock(state, sample, FRAME_SECONDS);
+    maxBackstep = Math.max(maxBackstep, previous - state.clock);
+    if (Math.abs(state.clock - backend) <= 0.01) {
+      frames = index + 1;
+      break;
+    }
+  }
+  check(
+    "a backward reset under 1 s re-syncs within 12 frames",
+    frames > 0 && frames <= 12,
+    `re-synced in ${frames} frames`,
+  );
+  check(
+    "the correction never steps the clock back more than one frame",
+    maxBackstep <= FRAME_SECONDS + 1e-9,
+    `largest step back ${(maxBackstep * 1000).toFixed(2)} ms`,
+  );
+}
+
+function runClockSnapChecks(reporter: TestReporter): void {
+  const { check } = reporter;
+
+  {
+    const state: CommClockState = { clock: 40, sample: null };
+    syncCommClock(
+      state,
+      { clock: 40, status: "running", speed: 1 },
+      FRAME_SECONDS,
+    );
+    syncCommClock(
+      state,
+      { clock: 39.5, status: "running", speed: 1 },
+      FRAME_SECONDS,
+    );
+    check(
+      "a running jump past the snap threshold snaps",
+      close(state.clock, 39.5),
+      `clock ${state.clock.toFixed(3)}`,
+    );
+  }
+  {
+    const state: CommClockState = { clock: 40, sample: null };
+    syncCommClock(
+      state,
+      { clock: 40, status: "running", speed: 1 },
+      FRAME_SECONDS,
+    );
+    syncCommClock(
+      state,
+      { clock: 12.5, status: "paused", speed: 1 },
+      FRAME_SECONDS,
+    );
+    check(
+      "pause snaps the display clock to the snapshot",
+      close(state.clock, 12.5),
+      `clock ${state.clock.toFixed(3)}`,
+    );
+  }
+}
+
+function runCommClockSuite(reporter: TestReporter): void {
+  reporter.group("Communication link clock");
+  runClockDriftChecks(reporter);
+  runClockBackwardResetChecks(reporter);
+  runClockSnapChecks(reporter);
 }
 
 export function runAgentsSuite(reporter: TestReporter): void {
@@ -532,5 +741,7 @@ export function runAgentsSuite(reporter: TestReporter): void {
   runLayoutSuite(reporter);
   runGaitSuite(reporter);
   runAnimatorSuite(reporter);
-  runLabelSuite(reporter);
+  runMotionSuite(reporter);
+  runLabelScaleSuite(reporter);
+  runCommClockSuite(reporter);
 }
