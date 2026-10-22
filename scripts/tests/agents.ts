@@ -1,7 +1,8 @@
 /**
- * Phase 4 checks for the pure agent modules: the rig table, heading damping,
- * label scale and pose blending. These are the parts of the 3D layer that can
- * run without a renderer, so `npm test` catches them in Node.
+ * Phase 4 checks for the pure agent modules: the rig table, accessory layout,
+ * gait, pose blending, heading damping and label scale. These are the parts of
+ * the 3D layer that can run without a renderer, so `npm test` catches them in
+ * Node. Each topic has its own suite; `runAgentsSuite` is the entry point.
  */
 import {
   AGENT_RIGS,
@@ -11,6 +12,7 @@ import {
   handSpread,
   headTopHeight,
   labelHeight,
+  legLength,
   rigFor,
 } from "../../src/agents/agentRigs.ts";
 import type { AgentRole } from "../../src/agents/agentTypes.ts";
@@ -28,6 +30,7 @@ import {
   MAX_LEG_SWING,
   MAX_WALK_CADENCE,
   TYPING_ARM_SPREAD,
+  WALK_RAMP_SPEED,
   createPose,
   poseFor,
   poseForState,
@@ -56,6 +59,9 @@ const ROLES: readonly AgentRole[] = [
   "reviewer",
 ];
 
+/** Shortest drawn leg, the worst case for the cadence cap. */
+const GAIT_LEG_LENGTH = legLength(AGENT_RIGS.qa);
+
 function close(a: number, b: number, tolerance = 1e-6): boolean {
   return Math.abs(a - b) <= tolerance;
 }
@@ -64,7 +70,7 @@ function finitePose(pose: ReturnType<typeof createPose>): boolean {
   return Object.values(pose).every((value) => Number.isFinite(value));
 }
 
-export function runAgentsSuite(reporter: TestReporter): void {
+function runRigSuite(reporter: TestReporter): void {
   const { check, group } = reporter;
 
   group("Agent rigs");
@@ -88,9 +94,9 @@ export function runAgentsSuite(reporter: TestReporter): void {
       const height = labelHeight(AGENT_RIGS[role]);
       return height >= 1.85 && height <= 2.05;
     }),
-    ROLES.map((role) => `${role}:${labelHeight(AGENT_RIGS[role]).toFixed(3)}`).join(
-      " ",
-    ),
+    ROLES.map(
+      (role) => `${role}:${labelHeight(AGENT_RIGS[role]).toFixed(3)}`,
+    ).join(" "),
   );
   check(
     "the visible head top after scale stays within 1.75-1.85 m",
@@ -98,9 +104,9 @@ export function runAgentsSuite(reporter: TestReporter): void {
       const height = headTopHeight(AGENT_RIGS[role]);
       return height >= 1.75 && height <= 1.85;
     }),
-    ROLES.map((role) => `${role}:${headTopHeight(AGENT_RIGS[role]).toFixed(3)}`).join(
-      " ",
-    ),
+    ROLES.map(
+      (role) => `${role}:${headTopHeight(AGENT_RIGS[role]).toFixed(3)}`,
+    ).join(" "),
   );
   check(
     "the label anchor clears the visible head top by 0.10-0.15 m",
@@ -141,6 +147,13 @@ export function runAgentsSuite(reporter: TestReporter): void {
     }),
   );
   check(
+    "the drawn leg length applies the rig scale to the hip height",
+    ROLES.every((role) => {
+      const rig = AGENT_RIGS[role];
+      return close(legLength(rig), rig.hipHeight * rig.scale);
+    }),
+  );
+  check(
     "all six accessories are distinct silhouettes",
     new Set(ROLES.map((role) => AGENT_RIGS[role].accessory)).size === 6 &&
       ACCESSORY_KINDS.length === 6,
@@ -166,124 +179,55 @@ export function runAgentsSuite(reporter: TestReporter): void {
     "rigFor returns the same table entry",
     ROLES.every((role) => rigFor(role) === AGENT_RIGS[role]),
   );
+}
+
+function runLayoutSuite(reporter: TestReporter): void {
+  const { check, group } = reporter;
 
   group("Robot accessories");
-  {
-    const layout = buildAccessoryLayout(
-      ROLES.map((role) => AGENT_RIGS[role]),
-    );
-    check(
-      "the layout builds one slot list per rig",
-      layout.slots.length === ROLES.length,
-    );
-    check(
-      "every pool has unique contiguous instance indices",
-      ACCESSORY_POOLS.every((pool) => {
-        const indices = layout.slots.flatMap((slots) =>
-          slots
-            .filter((slot) => slot.pool === pool)
-            .map((slot) => slot.index),
-        );
-        return (
-          indices.length === layout.counts[pool] &&
-          new Set(indices).size === indices.length &&
-          indices.every((index) => index >= 0 && index < indices.length)
-        );
-      }),
-    );
-    check(
-      "every rig carries an accent part for its colour",
-      layout.slots.every((slots) =>
-        slots.some(
-          (slot) =>
-            slot.pool === "accentBoxes" ||
-            slot.pool === "accentSpheres" ||
-            slot.pool === "accentRings",
-        ),
+  const layout = buildAccessoryLayout(ROLES.map((role) => AGENT_RIGS[role]));
+  check(
+    "the layout builds one slot list per rig",
+    layout.slots.length === ROLES.length,
+  );
+  check(
+    "every pool has unique contiguous instance indices",
+    ACCESSORY_POOLS.every((pool) => {
+      const indices = layout.slots.flatMap((slots) =>
+        slots
+          .filter((slot) => slot.pool === pool)
+          .map((slot) => slot.index),
+      );
+      return (
+        indices.length === layout.counts[pool] &&
+        new Set(indices).size === indices.length &&
+        indices.every((index) => index >= 0 && index < indices.length)
+      );
+    }),
+  );
+  check(
+    "every rig carries an accent part for its colour",
+    layout.slots.every((slots) =>
+      slots.some(
+        (slot) =>
+          slot.pool === "accentBoxes" ||
+          slot.pool === "accentSpheres" ||
+          slot.pool === "accentRings",
       ),
-    );
-    check(
-      "hip and belt parts follow the pelvis, not the leaning torso",
-      layout.slots.every(
-        (slots) =>
-          slots.filter((slot) => slot.space === "pelvis").length >= 3,
-      ),
-    );
-  }
-
-  group("Agent motion and labels");
-  check(
-    "shortest heading delta wraps across +/- PI",
-    close(shortestAngleDelta(3, -3), 2 * Math.PI - 6, 1e-6) &&
-      Math.abs(shortestAngleDelta(3, -3)) < Math.PI &&
-      Math.abs(shortestAngleDelta(-3, 3)) < Math.PI,
-  );
-  check(
-    "normalizeAngle wraps into (-PI, PI]",
-    close(normalizeAngle(Math.PI * 3), Math.PI, 1e-6) &&
-      close(normalizeAngle(-Math.PI * 3), Math.PI, 1e-6) &&
-      close(normalizeAngle(0), 0, 1e-6),
-  );
-  {
-    const first = dampAngle(3, -3, 9, 0.05);
-    check(
-      "dampAngle takes the short arc instead of crossing zero",
-      first > 3,
-      `result ${first.toFixed(4)}`,
-    );
-    const settled = dampAngle(3, -3, 9, 1);
-    check(
-      "dampAngle converges on the wrapped target",
-      Math.abs(shortestAngleDelta(settled, -3)) < 1e-3,
-      `result ${settled.toFixed(5)}`,
-    );
-    const split = dampAngle(dampAngle(3, -3, 9, 1 / 30), -3, 9, 1 / 30);
-    const whole = dampAngle(3, -3, 9, 1 / 15);
-    check(
-      "dampAngle is frame-rate independent",
-      Math.abs(split - whole) < 1e-6,
-      `${split.toFixed(6)} vs ${whole.toFixed(6)}`,
-    );
-  }
-  check(
-    "teleport detection triggers over 4 m",
-    isTeleport(0, 0, 4.1, 0) && !isTeleport(0, 0, 3.9, 0),
-  );
-  check(
-    "label scale clamps to 0.72-1.05",
-    close(labelScale(40, 4), LABEL_SCALE_MAX) &&
-      close(labelScale(40, 60), LABEL_SCALE_MIN),
-  );
-  {
-    const mid = labelScale(40, 9);
-    check(
-      "label scale follows 6.5 / (2 tan(fov/2) distance) in the middle",
-      mid > LABEL_SCALE_MIN &&
-        mid <= LABEL_SCALE_MAX &&
-        Math.abs(mid - 6.5 / (2 * Math.tan((40 * Math.PI) / 360) * 9)) < 1e-9,
-      `scale ${mid.toFixed(4)}`,
-    );
-  }
-  check(
-    "label scale is monotonic with distance",
-    [8, 10, 12, 14, 18].every((distance, index, list) =>
-      index === 0 ? true : labelScale(40, distance) <= labelScale(40, list[index - 1]),
     ),
   );
   check(
-    "frozen animation time scale is 0.15",
-    close(animationTimeScale(true), 0.15) && close(animationTimeScale(false), 1),
+    "hip and belt parts follow the pelvis, not the leaning torso",
+    layout.slots.every(
+      (slots) => slots.filter((slot) => slot.space === "pelvis").length >= 3,
+    ),
   );
+}
 
-  group("Agent pose blending");
-  check(
-    "createPose starts at rest",
-    Object.values(createPose()).every((value) => value === 0),
-  );
-  check(
-    "every state writes a finite pose",
-    ANIMATION_STATES.every((state) => finitePose(poseFor(state, 0.7, 2.4))),
-  );
+function runGaitSuite(reporter: TestReporter): void {
+  const { check, group } = reporter;
+
+  group("Agent gait");
   check(
     "walking swing is driven by actual speed",
     poseFor("walking", 0.1, 0).legLeftX === 0 &&
@@ -294,17 +238,36 @@ export function runAgentsSuite(reporter: TestReporter): void {
     poseFor("walking", 0.3, 2.4).bodyLift === 0 &&
       poseFor("walking", 0.3, 9.6).bodyLift === 0,
   );
-  {
-    const quarter = Math.PI / 2;
-    const atPeak = (speed: number) =>
-      poseFor("walking", 0, speed, DEFAULT_LEG_LENGTH, quarter);
-    check(
-      "walk swing grows with ground speed up to the cap",
-      Math.abs(atPeak(0.6).legLeftX) < Math.abs(atPeak(2.4).legLeftX) &&
-        Math.abs(atPeak(2.4).legLeftX) <= MAX_LEG_SWING + 1e-9,
-      `0.6:${atPeak(0.6).legLeftX.toFixed(3)} 2.4:${atPeak(2.4).legLeftX.toFixed(3)}`,
-    );
 
+  const quarter = Math.PI / 2;
+  const atPeak = (speed: number) =>
+    poseFor("walking", 0, speed, GAIT_LEG_LENGTH, quarter);
+  check(
+    "walk swing grows with ground speed up to the cap",
+    Math.abs(atPeak(0.6).legLeftX) < Math.abs(atPeak(2.4).legLeftX) &&
+      Math.abs(atPeak(2.4).legLeftX) <= MAX_LEG_SWING + 1e-9,
+    `0.6:${atPeak(0.6).legLeftX.toFixed(3)} 2.4:${atPeak(2.4).legLeftX.toFixed(3)}`,
+  );
+
+  {
+    let largestStep = 0;
+    let previous = walkAmplitude(0);
+    for (let speed = 0.002; speed <= WALK_RAMP_SPEED + 1e-9; speed += 0.002) {
+      const amplitude = walkAmplitude(speed);
+      largestStep = Math.max(largestStep, amplitude - previous);
+      previous = amplitude;
+    }
+    check(
+      "walk amplitude ramps in smoothly from zero",
+      walkAmplitude(0) === 0 &&
+        largestStep < 0.005 &&
+        walkAmplitude(0.02) < 0.02 &&
+        walkAmplitude(WALK_RAMP_SPEED) > 0.1,
+      `max step ${largestStep.toFixed(4)} rad, 0.02:${walkAmplitude(0.02).toFixed(4)}`,
+    );
+  }
+
+  {
     let peakLeg = 0;
     let peakArm = 0;
     for (let speed = 0; speed <= 9.6 + 1e-9; speed += 0.1) {
@@ -317,28 +280,39 @@ export function runAgentsSuite(reporter: TestReporter): void {
       peakLeg <= MAX_LEG_SWING + 1e-9 && peakArm <= MAX_ARM_SWING + 1e-9,
       `leg ${peakLeg.toFixed(3)} arm ${peakArm.toFixed(3)}`,
     );
+  }
 
-    const strideAt1x =
-      2 * DEFAULT_LEG_LENGTH * Math.sin(walkAmplitude(SIMULATION_CONFIG.walkSpeed));
-    const walkCadence1x = walkCadence(SIMULATION_CONFIG.walkSpeed);
-    const strideAt2x =
-      2 *
-      DEFAULT_LEG_LENGTH *
-      Math.sin(walkAmplitude(SIMULATION_CONFIG.walkSpeed * 2));
-    const walkCadence2x = walkCadence(SIMULATION_CONFIG.walkSpeed * 2);
+  {
+    const cadences: string[] = [];
+    const planted = ROLES.every((role) => {
+      const rig = AGENT_RIGS[role];
+      const leg = legLength(rig);
+      let ok = true;
+      for (const multiplier of [1, 2]) {
+        const speed = SIMULATION_CONFIG.walkSpeed * multiplier;
+        const stride = 2 * leg * Math.sin(walkAmplitude(speed));
+        const cadence = walkCadence(speed, leg);
+        if (Math.abs(cadence * stride - speed) > 1e-9) ok = false;
+        if (multiplier === 2) cadences.push(`${role}:${cadence.toFixed(2)}`);
+      }
+      return ok;
+    });
     check(
-      "the stride matches ground speed at 1x and 2x",
-      Math.abs(walkCadence1x * strideAt1x - SIMULATION_CONFIG.walkSpeed) <
-        1e-9 &&
-        Math.abs(walkCadence2x * strideAt2x - SIMULATION_CONFIG.walkSpeed * 2) <
-          1e-9,
-      `1x:${walkCadence1x.toFixed(2)} + 2x:${walkCadence2x.toFixed(2)} steps/s`,
+      "every rig's stride matches ground speed at 1x and 2x",
+      planted,
+      `${cadences.join(" ")} steps/s at 2x (cap ${MAX_WALK_CADENCE})`,
     );
+  }
+
+  {
     const strideAt4x =
       2 *
-      DEFAULT_LEG_LENGTH *
+      GAIT_LEG_LENGTH *
       Math.sin(walkAmplitude(SIMULATION_CONFIG.walkSpeed * 4));
-    const walkCadence4x = walkCadence(SIMULATION_CONFIG.walkSpeed * 4);
+    const walkCadence4x = walkCadence(
+      SIMULATION_CONFIG.walkSpeed * 4,
+      GAIT_LEG_LENGTH,
+    );
     check(
       "the step rate is capped at 4x, so the capped gait slides there",
       walkCadence4x === MAX_WALK_CADENCE &&
@@ -346,6 +320,7 @@ export function runAgentsSuite(reporter: TestReporter): void {
       `${walkCadence4x.toFixed(2)} steps/s covers ${(walkCadence4x * strideAt4x).toFixed(2)} m/s`,
     );
   }
+
   {
     const animator = new AgentAnimator();
     const step = 1 / 60;
@@ -353,7 +328,7 @@ export function runAgentsSuite(reporter: TestReporter): void {
     let rampOk = true;
     for (let index = 0; index < 720; index += 1) {
       const speed = Math.min(9.6, index * 0.02);
-      animator.update(step, "walking", speed, false, DEFAULT_LEG_LENGTH);
+      animator.update(step, "walking", speed, false, GAIT_LEG_LENGTH);
       const jump = animator.walkPhase - previous;
       if (jump < -1e-12 || jump > MAX_WALK_CADENCE * Math.PI * step + 1e-9) {
         rampOk = false;
@@ -367,10 +342,10 @@ export function runAgentsSuite(reporter: TestReporter): void {
     // point may only advance by one capped step.
     const settled = new AgentAnimator();
     for (let index = 0; index < 60 * 30; index += 1) {
-      settled.update(1 / 30, "walking", 2.4, false, DEFAULT_LEG_LENGTH);
+      settled.update(1 / 30, "walking", 2.4, false, GAIT_LEG_LENGTH);
     }
     const beforeChange = settled.walkPhase;
-    settled.update(1 / 30, "walking", 9.6, false, DEFAULT_LEG_LENGTH);
+    settled.update(1 / 30, "walking", 9.6, false, GAIT_LEG_LENGTH);
     const change = settled.walkPhase - beforeChange;
     check(
       "a speed change does not jump the gait phase",
@@ -378,6 +353,22 @@ export function runAgentsSuite(reporter: TestReporter): void {
       `jump ${change.toFixed(4)} rad`,
     );
   }
+}
+
+function runAnimatorSuite(reporter: TestReporter): void {
+  const { check, group } = reporter;
+
+  group("Agent pose blending");
+  check(
+    "createPose starts at rest",
+    Object.values(createPose()).every((value) => value === 0),
+  );
+  check(
+    "every state writes a finite pose",
+    ANIMATION_STATES.every((state) =>
+      finitePose(poseFor(state, 0.7, 2.4)),
+    ),
+  );
   check(
     "typing hands sit 0.30-0.35 m apart, inside the shoulders",
     ROLES.every((role) => {
@@ -463,4 +454,83 @@ export function runAgentsSuite(reporter: TestReporter): void {
       scratch.bodyLift !== first && finitePose(scratch),
     );
   }
+}
+
+function runLabelSuite(reporter: TestReporter): void {
+  const { check, group } = reporter;
+
+  group("Agent motion and labels");
+  check(
+    "shortest heading delta wraps across +/- PI",
+    close(shortestAngleDelta(3, -3), 2 * Math.PI - 6, 1e-6) &&
+      Math.abs(shortestAngleDelta(3, -3)) < Math.PI &&
+      Math.abs(shortestAngleDelta(-3, 3)) < Math.PI,
+  );
+  check(
+    "normalizeAngle wraps into (-PI, PI]",
+    close(normalizeAngle(Math.PI * 3), Math.PI, 1e-6) &&
+      close(normalizeAngle(-Math.PI * 3), Math.PI, 1e-6) &&
+      close(normalizeAngle(0), 0, 1e-6),
+  );
+  {
+    const first = dampAngle(3, -3, 9, 0.05);
+    check(
+      "dampAngle takes the short arc instead of crossing zero",
+      first > 3,
+      `result ${first.toFixed(4)}`,
+    );
+    const settled = dampAngle(3, -3, 9, 1);
+    check(
+      "dampAngle converges on the wrapped target",
+      Math.abs(shortestAngleDelta(settled, -3)) < 1e-3,
+      `result ${settled.toFixed(5)}`,
+    );
+    const split = dampAngle(dampAngle(3, -3, 9, 1 / 30), -3, 9, 1 / 30);
+    const whole = dampAngle(3, -3, 9, 1 / 15);
+    check(
+      "dampAngle is frame-rate independent",
+      Math.abs(split - whole) < 1e-6,
+      `${split.toFixed(6)} vs ${whole.toFixed(6)}`,
+    );
+  }
+  check(
+    "teleport detection triggers over 4 m",
+    isTeleport(0, 0, 4.1, 0) && !isTeleport(0, 0, 3.9, 0),
+  );
+  check(
+    "label scale clamps to 0.72-1.05",
+    close(labelScale(40, 4), LABEL_SCALE_MAX) &&
+      close(labelScale(40, 60), LABEL_SCALE_MIN),
+  );
+  {
+    const mid = labelScale(40, 9);
+    check(
+      "label scale follows 6.5 / (2 tan(fov/2) distance) in the middle",
+      mid > LABEL_SCALE_MIN &&
+        mid <= LABEL_SCALE_MAX &&
+        Math.abs(mid - 6.5 / (2 * Math.tan((40 * Math.PI) / 360) * 9)) < 1e-9,
+      `scale ${mid.toFixed(4)}`,
+    );
+  }
+  check(
+    "label scale is monotonic with distance",
+    [8, 10, 12, 14, 18].every((distance, index, list) =>
+      index === 0
+        ? true
+        : labelScale(40, distance) <= labelScale(40, list[index - 1]),
+    ),
+  );
+  check(
+    "frozen animation time scale is 0.15",
+    close(animationTimeScale(true), 0.15) &&
+      close(animationTimeScale(false), 1),
+  );
+}
+
+export function runAgentsSuite(reporter: TestReporter): void {
+  runRigSuite(reporter);
+  runLayoutSuite(reporter);
+  runGaitSuite(reporter);
+  runAnimatorSuite(reporter);
+  runLabelSuite(reporter);
 }

@@ -28,6 +28,8 @@ function handlePanelRender(): void {
     (window.__AAW_SIDE_PANEL_RENDERS__ ?? 0) + 1;
 }
 
+function ignorePanelRender(): void {}
+
 function subscribeToNothing(): () => void {
   return () => {};
 }
@@ -60,11 +62,14 @@ function PanelProfiler({
   enabled: boolean;
   children: ReactNode;
 }) {
-  // The Profiler is a development probe. Mounting it unconditionally makes
-  // every side-panel render pay for a measurement nobody reads.
-  if (!enabled) return <>{children}</>;
+  // Always render the same element tree: switching between a fragment and a
+  // Profiler would remount the side panel when the ?debug probe flips after
+  // hydration. Only the measurement callback is gated.
   return (
-    <Profiler id="side-panel" onRender={handlePanelRender}>
+    <Profiler
+      id="side-panel"
+      onRender={enabled ? handlePanelRender : ignorePanelRender}
+    >
       {children}
     </Profiler>
   );

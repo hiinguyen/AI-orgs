@@ -5,6 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
+import type { AgentId } from "@/agents/agentTypes";
 import { useWorldStore } from "@/state/useWorldStore";
 import type { CameraPresetId, ViewInsets } from "@/state/useWorldStore";
 import { agentVisuals } from "./agentVisuals";
@@ -139,6 +140,103 @@ function presetGoal(
   clampTarget(target);
 }
 
+/**
+ * Keep the orbit target on the damped robot while the camera keeps its
+ * offset. The controller runs at priority -2, before the characters write
+ * their visuals at 0, so this follows last frame's pose by design: one frame
+ * of lag keeps the camera ahead of the damped motion and leaves OrbitControls
+ * a single update step at -1.
+ */
+function followStep(
+  controls: OrbitControlsImpl,
+  camera: THREE.Camera,
+  followId: AgentId,
+  delta: number,
+): void {
+  const visual = agentVisuals[followId];
+  scratchTarget.set(visual.x, 1, visual.z);
+  const shiftX =
+    THREE.MathUtils.damp(
+      controls.target.x,
+      scratchTarget.x,
+      FOLLOW_LAMBDA,
+      delta,
+    ) - controls.target.x;
+  const shiftY =
+    THREE.MathUtils.damp(
+      controls.target.y,
+      scratchTarget.y,
+      FOLLOW_LAMBDA,
+      delta,
+    ) - controls.target.y;
+  const shiftZ =
+    THREE.MathUtils.damp(
+      controls.target.z,
+      scratchTarget.z,
+      FOLLOW_LAMBDA,
+      delta,
+    ) - controls.target.z;
+  controls.target.x += shiftX;
+  controls.target.y += shiftY;
+  controls.target.z += shiftZ;
+  camera.position.x += shiftX;
+  camera.position.y += shiftY;
+  camera.position.z += shiftZ;
+}
+
+/** Damp the orbit target and camera position towards an active move goal. */
+function goalStep(
+  controls: OrbitControlsImpl,
+  camera: THREE.Camera,
+  goal: MoveGoal,
+  delta: number,
+): void {
+  const target = goal.target;
+  controls.target.x = THREE.MathUtils.damp(
+    controls.target.x,
+    target.x,
+    TARGET_LAMBDA,
+    delta,
+  );
+  controls.target.y = THREE.MathUtils.damp(
+    controls.target.y,
+    target.y,
+    TARGET_LAMBDA,
+    delta,
+  );
+  controls.target.z = THREE.MathUtils.damp(
+    controls.target.z,
+    target.z,
+    TARGET_LAMBDA,
+    delta,
+  );
+
+  const position = goal.position;
+  camera.position.x = THREE.MathUtils.damp(
+    camera.position.x,
+    position.x,
+    POSITION_LAMBDA,
+    delta,
+  );
+  camera.position.y = THREE.MathUtils.damp(
+    camera.position.y,
+    position.y,
+    POSITION_LAMBDA,
+    delta,
+  );
+  camera.position.z = THREE.MathUtils.damp(
+    camera.position.z,
+    position.z,
+    POSITION_LAMBDA,
+    delta,
+  );
+
+  const settled =
+    controls.target.distanceToSquared(target) < 0.0004 &&
+    camera.position.distanceToSquared(position) < 0.0025;
+  if (settled) goal.active = false;
+}
+
 export function CameraController() {
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
   const request = useWorldStore((state) => state.camera);
@@ -261,93 +359,16 @@ export function CameraController() {
   useFrame((state, delta) => {
     const controls = controlsRef.current;
     if (!controls) return;
-    const camera = state.camera;
 
     const store = useWorldStore.getState();
     const followId = store.followAgentId;
 
     // A focus request that arrived with the follow toggle flies the camera in
     // first; once it settles, the follow branch keeps the resulting offset.
-    const followShifting = followId !== null && !goal.current.active;
-
-    if (followShifting) {
-      // Track the damped robot that is on screen, not the raw simulation
-      // position: the character lags its snapshot, and following the snapshot
-      // made the robot wobble inside the frame.
-      const visual = agentVisuals[followId];
-      scratchTarget.set(visual.x, 1, visual.z);
-      const shiftX =
-        THREE.MathUtils.damp(
-          controls.target.x,
-          scratchTarget.x,
-          FOLLOW_LAMBDA,
-          delta,
-        ) - controls.target.x;
-      const shiftY =
-        THREE.MathUtils.damp(
-          controls.target.y,
-          scratchTarget.y,
-          FOLLOW_LAMBDA,
-          delta,
-        ) - controls.target.y;
-      const shiftZ =
-        THREE.MathUtils.damp(
-          controls.target.z,
-          scratchTarget.z,
-          FOLLOW_LAMBDA,
-          delta,
-        ) - controls.target.z;
-      controls.target.x += shiftX;
-      controls.target.y += shiftY;
-      controls.target.z += shiftZ;
-      camera.position.x += shiftX;
-      camera.position.y += shiftY;
-      camera.position.z += shiftZ;
+    if (followId !== null && !goal.current.active) {
+      followStep(controls, state.camera, followId, delta);
     } else if (goal.current.active) {
-      const target = goal.current.target;
-      controls.target.x = THREE.MathUtils.damp(
-        controls.target.x,
-        target.x,
-        TARGET_LAMBDA,
-        delta,
-      );
-      controls.target.y = THREE.MathUtils.damp(
-        controls.target.y,
-        target.y,
-        TARGET_LAMBDA,
-        delta,
-      );
-      controls.target.z = THREE.MathUtils.damp(
-        controls.target.z,
-        target.z,
-        TARGET_LAMBDA,
-        delta,
-      );
-
-      const position = goal.current.position;
-      camera.position.x = THREE.MathUtils.damp(
-        camera.position.x,
-        position.x,
-        POSITION_LAMBDA,
-        delta,
-      );
-      camera.position.y = THREE.MathUtils.damp(
-        camera.position.y,
-        position.y,
-        POSITION_LAMBDA,
-        delta,
-      );
-      camera.position.z = THREE.MathUtils.damp(
-        camera.position.z,
-        position.z,
-        POSITION_LAMBDA,
-        delta,
-      );
-
-      const settled =
-        controls.target.distanceToSquared(target) < 0.0004 &&
-        camera.position.distanceToSquared(position) < 0.0025;
-      if (settled) goal.current.active = false;
+      goalStep(controls, state.camera, goal.current, delta);
     }
 
     clampTarget(controls.target);

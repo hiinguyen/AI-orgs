@@ -13,7 +13,7 @@ import {
   dampValue,
   isTeleport,
 } from "@/agents/agentMath";
-import { chestHeight } from "@/agents/agentRigs";
+import { chestHeight, legLength } from "@/agents/agentRigs";
 import { ACCENT_POOLS } from "@/agents/robotAccessories";
 import {
   liveWorld,
@@ -311,7 +311,7 @@ function writeAgentVisual(
     status,
     visual.speed,
     frozen,
-    rig.hipHeight,
+    legLength(rig),
   );
 
   publishVisualPose(profile, visual, rig);

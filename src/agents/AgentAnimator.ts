@@ -44,10 +44,13 @@ export const MAX_LEG_SWING = 0.5;
 export const MAX_ARM_SWING = 0.45;
 const ARM_SWING_RATIO = MAX_ARM_SWING / MAX_LEG_SWING;
 /**
- * Fastest gait cadence, in steps per second. Four full strides (eight steps)
- * per second still allow 2x to stay planted; 4x is capped and slides.
+ * Fastest gait cadence, in steps per second. With the drawn (scaled) leg
+ * length the slowest rig needs about 7.7 steps/s at 2x, so eight keeps every
+ * rig planted there; 4x is capped and slides.
  */
 export const MAX_WALK_CADENCE = 8;
+/** Ground speed over which the walk swing ramps in from zero, in m/s. */
+export const WALK_RAMP_SPEED = 0.1;
 /** Lateral arm angle that brings the typing hands over the keyboard. */
 export const TYPING_ARM_SPREAD = 0.28;
 
@@ -114,13 +117,15 @@ export function idlePose(pose: AgentPose, time: number, speed: number): void {
 }
 
 /**
- * Swing amplitude for a ground speed. It grows with speed, then stops at
- * `MAX_LEG_SWING`; a stationary robot keeps both legs neutral.
+ * Swing amplitude for a ground speed. It ramps in smoothly over the first
+ * `WALK_RAMP_SPEED` m/s, so crossing a standstill cannot step the legs from
+ * neutral to a visible swing, then grows with speed up to `MAX_LEG_SWING`.
  */
 export function walkAmplitude(speed: number): number {
   const moving = Math.max(0, speed);
-  if (moving <= 0.02) return 0;
-  return Math.min(MAX_LEG_SWING, 0.12 + 0.2 * moving);
+  const ramp = Math.min(1, moving / WALK_RAMP_SPEED);
+  const eased = ramp * ramp * (3 - 2 * ramp);
+  return Math.min(MAX_LEG_SWING, (0.12 + 0.2 * moving) * eased);
 }
 
 /**

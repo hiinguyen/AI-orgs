@@ -15,6 +15,10 @@ import { cn } from "@/components/ui";
  * after-render effect. That effect runs after the anchors were written in the
  * same frame, so a bubble never trails the robot by one frame, and it is
  * still one DOM update per frame with no React render.
+ *
+ * Bubble sizes are measured by a ResizeObserver, never inside the frame loop:
+ * reading offsetWidth after a style write would force a layout every frame.
+ * The tick still does all its reads before its writes.
  */
 
 const FADE_RATE = 11;
@@ -23,6 +27,11 @@ interface AnchorMemory {
   x: number;
   y: number;
   scale: number;
+}
+
+interface BubbleSize {
+  width: number;
+  height: number;
 }
 
 const anchorMemory: AnchorMemory[] = AGENT_IDS.map(() => ({
@@ -52,10 +61,16 @@ export function AgentLabelsOverlay() {
     (state) => state.overlays.speechIndicators,
   );
   const bubbleRefs = useRef<Array<HTMLDivElement | null>>([]);
+  const bubbleSizes = useRef<BubbleSize[]>(
+    AGENT_IDS.map(() => ({ width: 0, height: 0 })),
+  );
 
   useEffect(() => {
     let last = -1;
     const fade = new Array<number>(AGENT_IDS.length).fill(0);
+    const wanted = new Array<number>(AGENT_IDS.length).fill(0);
+    const transforms = new Array<string | null>(AGENT_IDS.length).fill(null);
+    const sizes = bubbleSizes.current;
     for (const memory of anchorMemory) {
       memory.x = Number.NEGATIVE_INFINITY;
       memory.y = Number.NEGATIVE_INFINITY;
@@ -65,6 +80,25 @@ export function AgentLabelsOverlay() {
       "(prefers-reduced-motion: reduce)",
     ).matches;
 
+    const measure = (element: HTMLElement, index: number) => {
+      sizes[index].width = element.offsetWidth;
+      sizes[index].height = element.offsetHeight;
+    };
+    const indexByElement = new Map<Element, number>();
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const index = indexByElement.get(entry.target);
+        if (index === undefined) continue;
+        measure(entry.target as HTMLElement, index);
+      }
+    });
+    bubbleRefs.current.forEach((element, index) => {
+      if (!element) return;
+      indexByElement.set(element, index);
+      observer.observe(element);
+      measure(element, index);
+    });
+
     const tick = (now: number) => {
       const elapsed =
         last < 0 ? 0.016 : Math.max(0.001, Math.min(0.1, (now - last) / 1000));
@@ -73,32 +107,30 @@ export function AgentLabelsOverlay() {
       const width = window.innerWidth;
       const height = window.innerHeight;
 
+      // Read phase: anchors, cached pill sizes and desired visibility.
       for (let index = 0; index < AGENT_IDS.length; index += 1) {
         const element = bubbleRefs.current[index];
-        if (!element) continue;
+        transforms[index] = null;
+        if (!element) {
+          wanted[index] = 0;
+          continue;
+        }
         const anchor = labelAnchorFor(AGENT_IDS[index]);
+        const size = sizes[index];
         // Keep the whole pill out of the floating UI: a sliver peeking out
         // under the top bar or the side panel reads as a rendering glitch.
         // The pill is centred on the anchor and sits above it, and its size
         // scales with the anchor.
-        const halfWidth = (element.offsetWidth * anchor.scale) / 2;
-        const pillHeight = element.offsetHeight * anchor.scale;
+        const halfWidth = (size.width * anchor.scale) / 2;
+        const pillHeight = size.height * anchor.scale;
         const clearOfUi =
           anchor.onScreen &&
           anchor.x - halfWidth > insets.left + 12 &&
           anchor.x + halfWidth < width - insets.right - 12 &&
           anchor.y - 10 - pillHeight > insets.top + 12 &&
           anchor.y < height - insets.bottom - 12;
-        const wanted = element.dataset.visible === "1" && clearOfUi ? 1 : 0;
-        if (reducedMotion) {
-          fade[index] = wanted;
-        } else {
-          fade[index] +=
-            (wanted - fade[index]) * (1 - Math.exp(-FADE_RATE * elapsed));
-        }
-
-        element.style.opacity = fade[index].toFixed(3);
-        element.style.visibility = fade[index] > 0.01 ? "visible" : "hidden";
+        wanted[index] =
+          element.dataset.visible === "1" && clearOfUi ? 1 : 0;
 
         if (!anchor.onScreen) continue;
         const memory = anchorMemory[index];
@@ -110,14 +142,35 @@ export function AgentLabelsOverlay() {
           memory.x = anchor.x;
           memory.y = anchor.y;
           memory.scale = anchor.scale;
-          element.style.transform =
+          transforms[index] =
             `translate3d(${anchor.x.toFixed(1)}px, ${(anchor.y - 10).toFixed(1)}px, 0) ` +
             `translate(-50%, -100%) scale(${anchor.scale.toFixed(3)})`;
         }
       }
+
+      // Write phase: fade and place the bubbles.
+      for (let index = 0; index < AGENT_IDS.length; index += 1) {
+        const element = bubbleRefs.current[index];
+        if (!element) continue;
+        if (reducedMotion) {
+          fade[index] = wanted[index];
+        } else {
+          fade[index] +=
+            (wanted[index] - fade[index]) *
+            (1 - Math.exp(-FADE_RATE * elapsed));
+        }
+        element.style.opacity = fade[index].toFixed(3);
+        element.style.visibility = fade[index] > 0.01 ? "visible" : "hidden";
+        const transform = transforms[index];
+        if (transform !== null) element.style.transform = transform;
+      }
     };
 
-    return addAfterEffect(tick);
+    const removeEffect = addAfterEffect(tick);
+    return () => {
+      removeEffect();
+      observer.disconnect();
+    };
   }, []);
 
   return (

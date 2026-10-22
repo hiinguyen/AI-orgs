@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { AgentId } from "@/agents/agentTypes";
@@ -16,6 +16,10 @@ import { geometries, sharedMaterial } from "./sharedResources";
  * packets running from sender to receiver over the link duration. The ribbon
  * is a pair of crossed strips, so it keeps its width from any camera angle,
  * and it is rewritten in place: no geometry is allocated per frame or link.
+ *
+ * The four slot geometries belong to this component, not to a module pool.
+ * Fiber never disposes primitives, so the layout effect disposes them when the
+ * component unmounts.
  */
 
 const MAX_LINKS = 4;
@@ -28,6 +32,11 @@ const ASSIGN_RIBBON_WIDTH = 0.02;
 const ARC_HEIGHT = 0.45;
 /** Instance scale of the shared 0.5 m sphere: 0.09 reads as a 9 cm dot. */
 const PACKET_SCALE = 0.09;
+/**
+ * A snapshot clock that moves further than this against the interpolated
+ * clock is a reset or a demo restart, not a late frame, so the clock snaps.
+ */
+const CLOCK_SNAP_SECONDS = 1;
 
 /**
  * Packets launch in a stagger and travel for the rest of the link, so none
@@ -96,6 +105,11 @@ interface LinkSlot {
   color: THREE.BufferAttribute;
 }
 
+interface LinkClock {
+  clock: number;
+  snapshot: WorldSnapshot | null;
+}
+
 function createSlot(index: number): LinkSlot {
   const geometry = new THREE.BufferGeometry();
   const position = new THREE.BufferAttribute(
@@ -139,10 +153,9 @@ function createSlot(index: number): LinkSlot {
   return { mesh, position, color };
 }
 
-const SLOTS: readonly LinkSlot[] = Array.from(
-  { length: MAX_LINKS },
-  (_, index) => createSlot(index),
-);
+function createSlots(): LinkSlot[] {
+  return Array.from({ length: MAX_LINKS }, (_, index) => createSlot(index));
+}
 
 function bezier(
   out: THREE.Vector3,
@@ -169,10 +182,7 @@ function bezier(
  */
 const linkOrder: number[] = [];
 
-function orderLinksNewestFirst(
-  links: readonly CommLink[],
-  clock: number,
-): number {
+function selectLinks(links: readonly CommLink[], clock: number): number {
   linkOrder.length = 0;
   for (let index = 0; index < links.length; index += 1) {
     const link = links[index];
@@ -193,10 +203,179 @@ function orderLinksNewestFirst(
   return Math.min(MAX_LINKS, linkOrder.length);
 }
 
+/**
+ * Interpolate the 30 Hz backend clock between snapshots. While running the
+ * interpolated clock only moves forward; a snapshot that arrives slightly
+ * behind it re-syncs with `max`. A large jump (reset, demo restart) or a
+ * non-running snapshot snaps instead.
+ */
+function advanceClock(
+  snapshot: WorldSnapshot,
+  state: LinkClock,
+  delta: number,
+): void {
+  if (snapshot !== state.snapshot) {
+    state.snapshot = snapshot;
+    const jump = snapshot.clock - state.clock;
+    if (
+      snapshot.status !== "running" ||
+      Math.abs(jump) > CLOCK_SNAP_SECONDS
+    ) {
+      state.clock = snapshot.clock;
+    } else {
+      state.clock = Math.max(state.clock, snapshot.clock);
+    }
+  } else if (snapshot.status === "running") {
+    state.clock += delta * snapshot.speed;
+  }
+}
+
+function clearPacket(mesh: THREE.InstancedMesh, index: number): void {
+  mesh.setMatrixAt(index, zeroMatrix);
+  scratchColor.setRGB(0, 0, 0);
+  mesh.setColorAt(index, scratchColor);
+}
+
+function hideSlot(
+  slot: LinkSlot,
+  slotIndex: number,
+  packets: THREE.InstancedMesh,
+): void {
+  slot.mesh.visible = false;
+  for (let packet = 0; packet < PACKETS_PER_LINK; packet += 1) {
+    clearPacket(packets, slotIndex * PACKETS_PER_LINK + packet);
+  }
+}
+
+/** Write one crossed-strip sample of the ribbon at parameter `t`. */
+function writeRibbonSample(
+  positionArray: Float32Array,
+  colorArray: Float32Array,
+  sample: number,
+  width: number,
+  sender: THREE.Color,
+): void {
+  const t = sample / (POINTS - 1);
+  bezier(scratchPoint, scratchA, scratchC, scratchB, t);
+  scratchTangent
+    .set(
+      2 * (1 - t) * (scratchC.x - scratchA.x) +
+        2 * t * (scratchB.x - scratchC.x),
+      2 * (1 - t) * (scratchC.y - scratchA.y) +
+        2 * t * (scratchB.y - scratchC.y),
+      2 * (1 - t) * (scratchC.z - scratchA.z) +
+        2 * t * (scratchB.z - scratchC.z),
+    )
+    .normalize();
+
+  scratchSide.copy(scratchTangent).cross(UP);
+  if (scratchSide.lengthSq() < 1e-6) {
+    scratchSide.set(1, 0, 0);
+  } else {
+    scratchSide.normalize();
+  }
+  scratchUp.copy(scratchSide).cross(scratchTangent).normalize();
+
+  const taper = 0.4 + 0.6 * Math.sin(Math.PI * t);
+  const halfWidth = width * taper;
+  // Stay at or below the sender's own colour: above one it clips white.
+  const intensity = 0.86 + 0.14 * Math.sin(Math.PI * t);
+  scratchColor.copy(sender).multiplyScalar(intensity);
+
+  const base = sample * 12;
+  for (let vertex = 0; vertex < 4; vertex += 1) {
+    const offset = base + vertex * 3;
+    const horizontal = vertex < 2 ? 1 : 0;
+    const sign = vertex % 2 === 0 ? -1 : 1;
+    const dx = horizontal
+      ? scratchSide.x * sign * halfWidth
+      : scratchUp.x * sign * halfWidth;
+    const dy = horizontal
+      ? scratchSide.y * sign * halfWidth
+      : scratchUp.y * sign * halfWidth;
+    const dz = horizontal
+      ? scratchSide.z * sign * halfWidth
+      : scratchUp.z * sign * halfWidth;
+    positionArray[offset] = scratchPoint.x + dx;
+    positionArray[offset + 1] = scratchPoint.y + dy;
+    positionArray[offset + 2] = scratchPoint.z + dz;
+    colorArray[offset] = scratchColor.r;
+    colorArray[offset + 1] = scratchColor.g;
+    colorArray[offset + 2] = scratchColor.b;
+  }
+}
+
+/** Fill one slot's ribbon vertices from the two agents' current chest poses. */
+function writeRibbon(slot: LinkSlot, link: CommLink): void {
+  const from = agentVisuals[link.from];
+  const to = agentVisuals[link.to];
+  scratchA.set(from.x, from.chestY, from.z);
+  scratchB.set(to.x, to.chestY, to.z);
+  const distance = Math.hypot(
+    scratchB.x - scratchA.x,
+    scratchB.z - scratchA.z,
+  );
+  scratchC.set(
+    (scratchA.x + scratchB.x) / 2,
+    Math.max(scratchA.y, scratchB.y) +
+      ARC_HEIGHT +
+      Math.min(distance * 0.04, 0.9),
+    (scratchA.z + scratchB.z) / 2,
+  );
+
+  const sender = AGENT_COLORS[link.from];
+  const width = link.kind === "assign" ? ASSIGN_RIBBON_WIDTH : RIBBON_WIDTH;
+  const positionArray = slot.position.array as Float32Array;
+  const colorArray = slot.color.array as Float32Array;
+  for (let sample = 0; sample < POINTS; sample += 1) {
+    writeRibbonSample(positionArray, colorArray, sample, width, sender);
+  }
+
+  slot.position.needsUpdate = true;
+  slot.color.needsUpdate = true;
+  slot.mesh.visible = true;
+}
+
+/** Launch the three packets along the ribbon for the current link progress. */
+function writePackets(
+  packets: THREE.InstancedMesh,
+  slotIndex: number,
+  link: CommLink,
+  clock: number,
+): void {
+  const duration = Math.max(0.001, link.endsAt - link.startedAt);
+  const progress = Math.min(
+    1,
+    Math.max(0, (clock - link.startedAt) / duration),
+  );
+  const sender = AGENT_COLORS[link.from];
+  const size = link.kind === "assign" ? PACKET_SCALE * 1.25 : PACKET_SCALE;
+
+  for (let packet = 0; packet < PACKETS_PER_LINK; packet += 1) {
+    const index = slotIndex * PACKETS_PER_LINK + packet;
+    const packetT =
+      (progress - packet * PACKET_STAGGER) / PACKET_TRAVEL;
+    if (packetT < 0 || packetT > 1) {
+      clearPacket(packets, index);
+      continue;
+    }
+    bezier(scratchPoint, scratchA, scratchC, scratchB, packetT);
+    scratchDummy.position.copy(scratchPoint);
+    scratchDummy.rotation.set(0, 0, 0);
+    scratchDummy.scale.setScalar(size);
+    scratchDummy.updateMatrix();
+    packets.setMatrixAt(index, scratchDummy.matrix);
+    scratchColor
+      .copy(sender)
+      .multiplyScalar(0.95 + 0.1 * Math.sin(packet));
+    packets.setColorAt(index, scratchColor);
+  }
+}
+
 export function CommLinks() {
   const packets = useRef<THREE.InstancedMesh>(null);
-  const clock = useRef(0);
-  const lastSnapshot = useRef<WorldSnapshot | null>(null);
+  const slots = useMemo(() => createSlots(), []);
+  const clock = useRef<LinkClock>({ clock: 0, snapshot: null });
 
   useLayoutEffect(() => {
     const mesh = packets.current;
@@ -212,7 +391,16 @@ export function CommLinks() {
       mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
       mesh.instanceColor.needsUpdate = true;
     }
-  }, []);
+
+    // Primitives are never disposed by fiber. The CPU-side buffers survive a
+    // dispose, so a StrictMode remount re-uploads them on the next frame.
+    return () => {
+      for (const slot of slots) {
+        slot.mesh.dispose();
+        slot.mesh.geometry.dispose();
+      }
+    };
+  }, [slots]);
 
   useFrame((_, delta) => {
     const packetMesh = packets.current;
@@ -220,152 +408,19 @@ export function CommLinks() {
     const snapshot = liveWorld.current;
     if (!snapshot) return;
 
-    // Interpolate the 30 Hz backend clock between snapshots; each snapshot
-    // re-syncs it. Without this the packets advance in visible steps.
-    if (snapshot !== lastSnapshot.current) {
-      lastSnapshot.current = snapshot;
-      clock.current = snapshot.clock;
-    } else if (snapshot.status === "running") {
-      clock.current += delta * snapshot.speed;
-    }
-
-    const links = snapshot.links;
-    // A snapshot can carry stale links whose end is already behind the clock;
-    // skip them and fill the draw slots from the newest active links.
-    const active = orderLinksNewestFirst(links, clock.current);
+    advanceClock(snapshot, clock.current, delta);
+    const active = selectLinks(snapshot.links, clock.current.clock);
 
     for (let slotIndex = 0; slotIndex < MAX_LINKS; slotIndex += 1) {
-      const slot = SLOTS[slotIndex];
+      const slot = slots[slotIndex];
       const link =
-        slotIndex < active ? links[linkOrder[slotIndex]] : undefined;
+        slotIndex < active ? snapshot.links[linkOrder[slotIndex]] : undefined;
       if (!link) {
-        slot.mesh.visible = false;
-        for (let packet = 0; packet < PACKETS_PER_LINK; packet += 1) {
-          const index = slotIndex * PACKETS_PER_LINK + packet;
-          packetMesh.setMatrixAt(index, zeroMatrix);
-          scratchColor.setRGB(0, 0, 0);
-          packetMesh.setColorAt(index, scratchColor);
-        }
+        hideSlot(slot, slotIndex, packetMesh);
         continue;
       }
-
-      const from = agentVisuals[link.from];
-      const to = agentVisuals[link.to];
-      scratchA.set(from.x, from.chestY, from.z);
-      scratchB.set(to.x, to.chestY, to.z);
-      const distance = Math.hypot(
-        scratchB.x - scratchA.x,
-        scratchB.z - scratchA.z,
-      );
-      scratchC.set(
-        (scratchA.x + scratchB.x) / 2,
-        Math.max(scratchA.y, scratchB.y) +
-          ARC_HEIGHT +
-          Math.min(distance * 0.04, 0.9),
-        (scratchA.z + scratchB.z) / 2,
-      );
-
-      const sender = AGENT_COLORS[link.from];
-      const width =
-        link.kind === "assign" ? ASSIGN_RIBBON_WIDTH : RIBBON_WIDTH;
-      const positionArray = slot.position.array as Float32Array;
-      const colorArray = slot.color.array as Float32Array;
-
-      for (let sample = 0; sample < POINTS; sample += 1) {
-        const t = sample / (POINTS - 1);
-        bezier(
-          scratchPoint,
-          scratchA,
-          scratchC,
-          scratchB,
-          t,
-        );
-        scratchTangent
-          .set(
-            2 * (1 - t) * (scratchC.x - scratchA.x) +
-              2 * t * (scratchB.x - scratchC.x),
-            2 * (1 - t) * (scratchC.y - scratchA.y) +
-              2 * t * (scratchB.y - scratchC.y),
-            2 * (1 - t) * (scratchC.z - scratchA.z) +
-              2 * t * (scratchB.z - scratchC.z),
-          )
-          .normalize();
-
-        scratchSide.copy(scratchTangent).cross(UP);
-        if (scratchSide.lengthSq() < 1e-6) {
-          scratchSide.set(1, 0, 0);
-        } else {
-          scratchSide.normalize();
-        }
-        scratchUp.copy(scratchSide).cross(scratchTangent).normalize();
-
-        const taper = 0.4 + 0.6 * Math.sin(Math.PI * t);
-        const halfWidth = width * taper;
-        // Stay at or below the sender's own colour: above one it clips white.
-        const intensity = 0.86 + 0.14 * Math.sin(Math.PI * t);
-        scratchColor.copy(sender).multiplyScalar(intensity);
-
-        const base = sample * 12;
-        for (let vertex = 0; vertex < 4; vertex += 1) {
-          const offset = base + vertex * 3;
-          const horizontal = vertex < 2 ? 1 : 0;
-          const sign = vertex % 2 === 0 ? -1 : 1;
-          const dx = horizontal
-            ? scratchSide.x * sign * halfWidth
-            : scratchUp.x * sign * halfWidth;
-          const dy = horizontal
-            ? scratchSide.y * sign * halfWidth
-            : scratchUp.y * sign * halfWidth;
-          const dz = horizontal
-            ? scratchSide.z * sign * halfWidth
-            : scratchUp.z * sign * halfWidth;
-          positionArray[offset] = scratchPoint.x + dx;
-          positionArray[offset + 1] = scratchPoint.y + dy;
-          positionArray[offset + 2] = scratchPoint.z + dz;
-          colorArray[offset] = scratchColor.r;
-          colorArray[offset + 1] = scratchColor.g;
-          colorArray[offset + 2] = scratchColor.b;
-        }
-      }
-
-      slot.position.needsUpdate = true;
-      slot.color.needsUpdate = true;
-      slot.mesh.visible = true;
-
-      const duration = Math.max(0.001, link.endsAt - link.startedAt);
-      const progress = Math.min(
-        1,
-        Math.max(0, (clock.current - link.startedAt) / duration),
-      );
-      for (let packet = 0; packet < PACKETS_PER_LINK; packet += 1) {
-        const index = slotIndex * PACKETS_PER_LINK + packet;
-        const packetT =
-          (progress - packet * PACKET_STAGGER) / PACKET_TRAVEL;
-        if (packetT < 0 || packetT > 1) {
-          packetMesh.setMatrixAt(index, zeroMatrix);
-          scratchColor.setRGB(0, 0, 0);
-          packetMesh.setColorAt(index, scratchColor);
-          continue;
-        }
-        bezier(
-          scratchPoint,
-          scratchA,
-          scratchC,
-          scratchB,
-          packetT,
-        );
-        scratchDummy.position.copy(scratchPoint);
-        scratchDummy.rotation.set(0, 0, 0);
-        const size =
-          link.kind === "assign" ? PACKET_SCALE * 1.25 : PACKET_SCALE;
-        scratchDummy.scale.setScalar(size);
-        scratchDummy.updateMatrix();
-        packetMesh.setMatrixAt(index, scratchDummy.matrix);
-        scratchColor
-          .copy(sender)
-          .multiplyScalar(0.95 + 0.1 * Math.sin(packet));
-        packetMesh.setColorAt(index, scratchColor);
-      }
+      writeRibbon(slot, link);
+      writePackets(packetMesh, slotIndex, link, clock.current.clock);
     }
 
     packetMesh.instanceMatrix.needsUpdate = true;
@@ -374,7 +429,7 @@ export function CommLinks() {
 
   return (
     <group name="comm-links">
-      {SLOTS.map((slot) => (
+      {slots.map((slot) => (
         <primitive key={slot.mesh.name} object={slot.mesh} />
       ))}
       <instancedMesh

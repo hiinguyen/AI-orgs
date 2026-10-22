@@ -205,6 +205,15 @@ export function chestHeight(rig: AgentRig): number {
 }
 
 /**
+ * Drawn leg length: the hip height after the root scale is applied. The gait
+ * must use this, not the unscaled `hipHeight`, or the stride is short by the
+ * rig scale and the feet slide.
+ */
+export function legLength(rig: AgentRig): number {
+  return rig.hipHeight * rig.scale;
+}
+
+/**
  * Lateral distance between the hands when both arms are rotated inwards by
  * `armZ` radians. The Z rotation moves a hand by `armLength * sin(armZ)`
  * towards the centre line, so typing can bring the hands over a keyboard
