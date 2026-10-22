@@ -176,7 +176,14 @@ export function AgentDetails({ agentId }: { agentId: AgentId }) {
             "btn btn-ghost justify-start",
             following && "border-signal/35 text-signal",
           )}
-          onClick={() => setFollowAgent(following ? null : agent.id)}
+          onClick={() => {
+            if (following) {
+              setFollowAgent(null);
+            } else {
+              setFollowAgent(agent.id);
+              focusAgent(agent.id);
+            }
+          }}
           aria-pressed={following}
         >
           {following ? (

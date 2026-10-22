@@ -5,9 +5,9 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import * as THREE from "three";
-import type { AgentState } from "@/agents/agentTypes";
-import { liveWorld, useWorldStore } from "@/state/useWorldStore";
+import { useWorldStore } from "@/state/useWorldStore";
 import type { CameraPresetId, ViewInsets } from "@/state/useWorldStore";
+import { agentVisuals } from "./agentVisuals";
 import { CAMERA_LIMITS, CAMERA_PRESETS } from "./cameraPresets";
 
 const TARGET_LAMBDA = 4;
@@ -266,48 +266,43 @@ export function CameraController() {
     const store = useWorldStore.getState();
     const followId = store.followAgentId;
 
-    if (followId !== null) {
-      const agents = liveWorld.current?.agents;
-      let agent: AgentState | undefined;
-      if (agents) {
-        for (let index = 0; index < agents.length; index += 1) {
-          if (agents[index].id === followId) {
-            agent = agents[index];
-            break;
-          }
-        }
-      }
-      if (agent) {
-        scratchTarget.set(agent.position.x, 1, agent.position.z);
-        const shiftX =
-          THREE.MathUtils.damp(
-            controls.target.x,
-            scratchTarget.x,
-            FOLLOW_LAMBDA,
-            delta,
-          ) - controls.target.x;
-        const shiftY =
-          THREE.MathUtils.damp(
-            controls.target.y,
-            scratchTarget.y,
-            FOLLOW_LAMBDA,
-            delta,
-          ) - controls.target.y;
-        const shiftZ =
-          THREE.MathUtils.damp(
-            controls.target.z,
-            scratchTarget.z,
-            FOLLOW_LAMBDA,
-            delta,
-          ) - controls.target.z;
-        controls.target.x += shiftX;
-        controls.target.y += shiftY;
-        controls.target.z += shiftZ;
-        camera.position.x += shiftX;
-        camera.position.y += shiftY;
-        camera.position.z += shiftZ;
-        goal.current.active = false;
-      }
+    // A focus request that arrived with the follow toggle flies the camera in
+    // first; once it settles, the follow branch keeps the resulting offset.
+    const followShifting = followId !== null && !goal.current.active;
+
+    if (followShifting) {
+      // Track the damped robot that is on screen, not the raw simulation
+      // position: the character lags its snapshot, and following the snapshot
+      // made the robot wobble inside the frame.
+      const visual = agentVisuals[followId];
+      scratchTarget.set(visual.x, 1, visual.z);
+      const shiftX =
+        THREE.MathUtils.damp(
+          controls.target.x,
+          scratchTarget.x,
+          FOLLOW_LAMBDA,
+          delta,
+        ) - controls.target.x;
+      const shiftY =
+        THREE.MathUtils.damp(
+          controls.target.y,
+          scratchTarget.y,
+          FOLLOW_LAMBDA,
+          delta,
+        ) - controls.target.y;
+      const shiftZ =
+        THREE.MathUtils.damp(
+          controls.target.z,
+          scratchTarget.z,
+          FOLLOW_LAMBDA,
+          delta,
+        ) - controls.target.z;
+      controls.target.x += shiftX;
+      controls.target.y += shiftY;
+      controls.target.z += shiftZ;
+      camera.position.x += shiftX;
+      camera.position.y += shiftY;
+      camera.position.z += shiftZ;
     } else if (goal.current.active) {
       const target = goal.current.target;
       controls.target.x = THREE.MathUtils.damp(
@@ -371,8 +366,6 @@ export function CameraController() {
       onStart={() => {
         hasUserInteracted.current = true;
         goal.current.active = false;
-        const store = useWorldStore.getState();
-        if (store.followAgentId !== null) store.setFollowAgent(null);
       }}
     />
   );

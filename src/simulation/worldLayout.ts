@@ -72,42 +72,42 @@ export const LOCATIONS: Record<LocationId, WorldLocation> = {
   ops: {
     id: "ops",
     label: "Ops Console",
-    slots: [{ x: -8.25, z: 0.05 }],
+    slots: [{ x: -8.25, z: -0.03 }],
     facing: Math.PI,
     zone: "research",
   },
   research: {
     id: "research",
     label: "Research Station",
-    slots: [{ x: -10, z: -3.75 }],
+    slots: [{ x: -10, z: -3.83 }],
     facing: Math.PI,
     zone: "research",
   },
   product: {
     id: "product",
     label: "Product Station",
-    slots: [{ x: -6.5, z: -3.75 }],
+    slots: [{ x: -6.5, z: -3.83 }],
     facing: Math.PI,
     zone: "research",
   },
   dev: {
     id: "dev",
     label: "Engineering Station",
-    slots: [{ x: 6.5, z: -3.75 }],
+    slots: [{ x: 6.5, z: -3.83 }],
     facing: Math.PI,
     zone: "development",
   },
   testing: {
     id: "testing",
     label: "QA Lab",
-    slots: [{ x: 10, z: -3.75 }],
+    slots: [{ x: 10, z: -3.83 }],
     facing: Math.PI,
     zone: "development",
   },
   review: {
     id: "review",
     label: "Review Station",
-    slots: [{ x: 8.25, z: 0.05 }],
+    slots: [{ x: 8.25, z: -0.03 }],
     facing: Math.PI,
     zone: "development",
   },
@@ -215,7 +215,7 @@ export type StationId =
 export interface Station {
   id: StationId;
   label: string;
-  /** Desk position, 1.2 m behind the stand slot. */
+  /** Desk position, 1.12 m behind the stand slot so typing hands reach. */
   position: Vec2;
   /** Desk rotation in radians (0: monitor faces +z). */
   rotation: number;

@@ -80,21 +80,6 @@ function buildDeskBase(): THREE.BufferGeometry {
   ]);
 }
 
-function buildChair(): THREE.BufferGeometry {
-  return merge([
-    transformed(unitBox().scale(0.52, 0.09, 0.5), [0, 0.46, 0]),
-    transformed(unitBox().scale(0.52, 0.55, 0.08), [0, 0.75, 0.23]),
-    transformed(
-      new THREE.CylinderGeometry(0.035, 0.035, 0.34, 10),
-      [0, 0.28, 0],
-    ),
-    transformed(
-      new THREE.CylinderGeometry(0.3, 0.3, 0.045, 18),
-      [0, 0.06, 0],
-    ),
-  ]);
-}
-
 function buildMonitorStand(): THREE.BufferGeometry {
   return merge([
     transformed(unitBox().scale(0.3, 0.02, 0.18), [0, 0.01, 0]),
@@ -189,9 +174,6 @@ export const geometries = {
   },
   get deskBase(): THREE.BufferGeometry {
     return sharedGeometry("desk-base", buildDeskBase);
-  },
-  get chair(): THREE.BufferGeometry {
-    return sharedGeometry("chair", buildChair);
   },
   get monitorFrame(): THREE.BoxGeometry {
     return sharedGeometry(
@@ -501,9 +483,10 @@ export const materials = {
       "ceramic",
       () =>
         new THREE.MeshStandardMaterial({
-          color: "#e6ebf2",
-          roughness: 0.42,
-          metalness: 0.06,
+          color: "#f2f5fa",
+          roughness: 0.38,
+          metalness: 0.05,
+          envMapIntensity: 1.2,
         }),
     );
   },

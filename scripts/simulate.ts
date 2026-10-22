@@ -13,6 +13,7 @@ import {
   runConcurrencySuite,
   runDemoSuite,
 } from "./tests/engine.ts";
+import { runAgentsSuite } from "./tests/agents.ts";
 import { runMirrorSuite } from "./tests/store.ts";
 import { runLifecycleSuite, runStateMachineSuite } from "./tests/workflow.ts";
 import type { TestReporter } from "./tests/harness.ts";
@@ -43,6 +44,7 @@ async function main(): Promise<void> {
   runLifecycleSuite(reporter);
   runConcurrencySuite(reporter);
   runBacklogSuite(reporter);
+  runAgentsSuite(reporter);
   runMirrorSuite(reporter);
   await runBackendSuite(reporter);
 

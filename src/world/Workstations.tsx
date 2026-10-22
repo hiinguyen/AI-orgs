@@ -51,12 +51,51 @@ const MONITORS: readonly MonitorSlot[] = STATIONS.flatMap((station) =>
   }),
 );
 
-const KEYBOARD_Y = DESK_SURFACE_Y + 0.014;
+const DESK_TOP_Y = DESK_SURFACE_Y + 0.1;
+const KEYBOARD_Y = DESK_TOP_Y + 0.011;
+
+interface RingSeat {
+  x: number;
+  z: number;
+  rotation: number;
+}
+
+/**
+ * Furniture seats halfway between the agent ring slots, so a robot can stand
+ * on every slot without clipping a stool or a lounge seat.
+ */
+function seatsBetweenSlots(
+  slots: readonly { x: number; z: number }[],
+  center: { x: number; z: number },
+): RingSeat[] {
+  const count = slots.length;
+  return slots.map((slot) => {
+    const angle =
+      Math.atan2(slot.x - center.x, slot.z - center.z) +
+      Math.PI / count;
+    const radius = Math.hypot(slot.x - center.x, slot.z - center.z);
+    return {
+      x: center.x + Math.sin(angle) * radius,
+      z: center.z + Math.cos(angle) * radius,
+      rotation: angle + Math.PI,
+    };
+  });
+}
+
+const COLLAB_CENTER = LOCATIONS.collab.center ?? { x: -5, z: 5.6 };
+const LOUNGE_CENTER = LOCATIONS.lounge.center ?? { x: 7.5, z: 6.2 };
+const COLLAB_SEATS = seatsBetweenSlots(
+  LOCATIONS.collab.slots,
+  COLLAB_CENTER,
+);
+const LOUNGE_SEATS = seatsBetweenSlots(
+  LOCATIONS.lounge.slots,
+  LOUNGE_CENTER,
+);
 
 function Desks() {
   const slabs = useRef<THREE.InstancedMesh>(null);
   const bases = useRef<THREE.InstancedMesh>(null);
-  const chairs = useRef<THREE.InstancedMesh>(null);
   const keyboards = useRef<THREE.InstancedMesh>(null);
   const strips = useRef<THREE.InstancedMesh>(null);
   const frames = useRef<THREE.InstancedMesh>(null);
@@ -89,10 +128,9 @@ function Desks() {
       dummy.updateMatrix();
       bases.current?.setMatrixAt(index, dummy.matrix);
 
-      dummy.position.set(x, 0, z + 1.02);
-      dummy.updateMatrix();
-      chairs.current?.setMatrixAt(index, dummy.matrix);
-
+      // No chair between the robot and the desk: the agent stands at its
+      // workstation and types. A chair there overlapped the torso and the
+      // working arms passed through its back.
       dummy.position.set(x, KEYBOARD_Y, z + 0.34);
       dummy.updateMatrix();
       keyboards.current?.setMatrixAt(index, dummy.matrix);
@@ -132,7 +170,6 @@ function Desks() {
     for (const mesh of [
       slabs.current,
       bases.current,
-      chairs.current,
       keyboards.current,
       strips.current,
       frames.current,
@@ -163,11 +200,6 @@ function Desks() {
       <instancedMesh
         ref={bases}
         args={[geometries.deskBase, materials.chair, STATIONS.length]}
-        castShadow
-      />
-      <instancedMesh
-        ref={chairs}
-        args={[geometries.chair, materials.chair, STATIONS.length]}
         castShadow
       />
       <instancedMesh
@@ -365,23 +397,18 @@ function PlanningBoard() {
 
 function CollabTable() {
   const stools = useRef<THREE.InstancedMesh>(null);
-  const slots = LOCATIONS.collab.slots;
-  const center = LOCATIONS.collab.center ?? { x: -5, z: 5.6 };
+  const center = COLLAB_CENTER;
 
   useLayoutEffect(() => {
     const dummy = new THREE.Object3D();
-    slots.forEach((slot, index) => {
-      dummy.position.set(slot.x, 0, slot.z);
-      dummy.rotation.set(
-        0,
-        Math.atan2(center.x - slot.x, center.z - slot.z),
-        0,
-      );
+    COLLAB_SEATS.forEach((seat, index) => {
+      dummy.position.set(seat.x, 0, seat.z);
+      dummy.rotation.set(0, seat.rotation, 0);
       dummy.updateMatrix();
       stools.current?.setMatrixAt(index, dummy.matrix);
     });
     if (stools.current) stools.current.instanceMatrix.needsUpdate = true;
-  }, [center.x, center.z, slots]);
+  }, []);
 
   return (
     <group>
@@ -410,7 +437,7 @@ function CollabTable() {
       </group>
       <instancedMesh
         ref={stools}
-        args={[geometries.stool, materials.chair, slots.length]}
+        args={[geometries.stool, materials.chair, COLLAB_SEATS.length]}
         castShadow
       />
     </group>
@@ -419,23 +446,18 @@ function CollabTable() {
 
 function Lounge() {
   const seats = useRef<THREE.InstancedMesh>(null);
-  const slots = LOCATIONS.lounge.slots;
-  const center = LOCATIONS.lounge.center ?? { x: 7.5, z: 6.2 };
+  const center = LOUNGE_CENTER;
 
   useLayoutEffect(() => {
     const dummy = new THREE.Object3D();
-    slots.forEach((slot, index) => {
-      dummy.position.set(slot.x, 0, slot.z);
-      dummy.rotation.set(
-        0,
-        Math.atan2(center.x - slot.x, center.z - slot.z),
-        0,
-      );
+    LOUNGE_SEATS.forEach((seat, index) => {
+      dummy.position.set(seat.x, 0, seat.z);
+      dummy.rotation.set(0, seat.rotation, 0);
       dummy.updateMatrix();
       seats.current?.setMatrixAt(index, dummy.matrix);
     });
     if (seats.current) seats.current.instanceMatrix.needsUpdate = true;
-  }, [center.x, center.z, slots]);
+  }, []);
 
   return (
     <group>
@@ -458,7 +480,7 @@ function Lounge() {
       </group>
       <instancedMesh
         ref={seats}
-        args={[geometries.loungeSeat, materials.chair, slots.length]}
+        args={[geometries.loungeSeat, materials.chair, LOUNGE_SEATS.length]}
         castShadow
         receiveShadow
       />

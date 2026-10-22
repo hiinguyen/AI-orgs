@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import {
+  Profiler,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+} from "react";
+import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { connectBackend, commands } from "@/integrations/backendClient";
 import { useWorldStore } from "@/state/useWorldStore";
@@ -10,11 +16,59 @@ import { TopBar } from "./TopBar";
 import { LoadingScreen } from "./LoadingScreen";
 import { SidePanel } from "@/components/panels/SidePanel";
 import { TaskDialog } from "@/components/panels/TaskDialog";
+import { AgentLabelsOverlay } from "@/components/world/AgentLabelsOverlay";
 
 const WorldCanvas = dynamic(
   () => import("@/world/WorldCanvas").then((module) => module.WorldCanvas),
   { ssr: false },
 );
+
+function handlePanelRender(): void {
+  window.__AAW_SIDE_PANEL_RENDERS__ =
+    (window.__AAW_SIDE_PANEL_RENDERS__ ?? 0) + 1;
+}
+
+function subscribeToNothing(): () => void {
+  return () => {};
+}
+
+function panelProbeOnClient(): boolean {
+  return new URLSearchParams(window.location.search).has("debug");
+}
+
+function panelProbeOnServer(): boolean {
+  return false;
+}
+
+/**
+ * Read the `?debug` probe without a hydration mismatch: the server snapshot
+ * is false, and React switches to the client snapshot after hydrating. The
+ * first client render therefore matches the server markup.
+ */
+function usePanelRenderProbe(): boolean {
+  return useSyncExternalStore(
+    subscribeToNothing,
+    panelProbeOnClient,
+    panelProbeOnServer,
+  );
+}
+
+function PanelProfiler({
+  enabled,
+  children,
+}: {
+  enabled: boolean;
+  children: ReactNode;
+}) {
+  // The Profiler is a development probe. Mounting it unconditionally makes
+  // every side-panel render pay for a measurement nobody reads.
+  if (!enabled) return <>{children}</>;
+  return (
+    <Profiler id="side-panel" onRender={handlePanelRender}>
+      {children}
+    </Profiler>
+  );
+}
 
 function pickInitialQuality(): { quality: "high" | "low"; auto: boolean } {
   const params = new URLSearchParams(window.location.search);
@@ -32,6 +86,7 @@ function pickInitialQuality(): { quality: "high" | "low"; auto: boolean } {
 export function AppShell() {
   const sceneReady = useWorldStore((state) => state.sceneReady);
   const backendConnected = useWorldStore((state) => state.backend.connected);
+  const panelProbe = usePanelRenderProbe();
   const navRef = useRef<HTMLElement | null>(null);
   const topRef = useRef<HTMLElement | null>(null);
   const panelRef = useRef<HTMLElement | null>(null);
@@ -97,6 +152,15 @@ export function AppShell() {
       const store = useWorldStore.getState();
       if (store.taskDialogOpen) return;
 
+      // Escape never activates a focused control, so it must run before the
+      // guard below. The Follow button keeps focus after it is clicked, and
+      // that is exactly when the user presses Escape to release follow mode.
+      const key = event.key.toLowerCase();
+      if (key === "escape") {
+        store.clearSelection();
+        return;
+      }
+
       const target = event.target;
       if (target instanceof HTMLElement) {
         // Never steal a key from a focused control: Space activates the
@@ -107,7 +171,6 @@ export function AppShell() {
         if (interactive !== null) return;
       }
 
-      const key = event.key.toLowerCase();
       if (event.code === "Space" || key === " ") {
         event.preventDefault();
         if (store.simStatus === "running") {
@@ -148,6 +211,7 @@ export function AppShell() {
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
       <WorldCanvas />
+      <AgentLabelsOverlay />
 
       <div className="pointer-events-none absolute inset-0 flex flex-col gap-2 p-2 md:flex-row md:gap-3 md:p-3">
         <NavRail
@@ -162,7 +226,9 @@ export function AppShell() {
             <div className="relative min-h-0 min-w-0 flex-1">
               <CameraBar className="pointer-events-auto absolute bottom-0 left-0" />
             </div>
-            <SidePanel ref={panelRef} className="pointer-events-auto" />
+            <PanelProfiler enabled={panelProbe}>
+              <SidePanel ref={panelRef} className="pointer-events-auto" />
+            </PanelProfiler>
           </div>
         </div>
       </div>
