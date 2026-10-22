@@ -16,6 +16,7 @@ const TOLERANCE_PX = 5;
 let startX = 0;
 let startY = 0;
 let dragging = true;
+let dragNotified = false;
 let lastWasDrag = true;
 let clickConsumed = false;
 
@@ -30,6 +31,8 @@ export function consumeClickGesture(): void {
 export interface PointerGestureOptions {
   /** A click on the canvas that no pick handler consumed. */
   onEmptyClick?: () => void;
+  /** The pointer moved more than the click tolerance with a button held. */
+  onDrag?: () => void;
 }
 
 export function installPointerGesture(
@@ -41,6 +44,7 @@ export function installPointerGesture(
     startX = event.clientX;
     startY = event.clientY;
     dragging = false;
+    dragNotified = false;
     lastWasDrag = false;
     clickConsumed = false;
   };
@@ -52,6 +56,10 @@ export function installPointerGesture(
       Math.abs(event.clientY - startY) > TOLERANCE_PX
     ) {
       dragging = true;
+      if (!dragNotified) {
+        dragNotified = true;
+        options.onDrag?.();
+      }
     }
   };
 

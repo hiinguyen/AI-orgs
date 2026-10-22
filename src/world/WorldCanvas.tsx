@@ -4,10 +4,14 @@ import { useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { PerformanceMonitor } from "@react-three/drei";
 import * as THREE from "three";
-import { useWorldStore } from "@/state/useWorldStore";
+import { liveWorld, useWorldStore } from "@/state/useWorldStore";
+import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { AGENT_IDS } from "@/agents/agentTypes";
+import { labelAnchorFor } from "@/world/labelAnchors";
 import { Lighting } from "./Lighting";
 import { OfficeEnvironment } from "./OfficeEnvironment";
 import { Workstations } from "./Workstations";
+import { AgentsLayer } from "./AgentsLayer";
 import { CameraController } from "./CameraController";
 import { InteractionManager } from "./InteractionManager";
 import { CAMERA_FOV, INITIAL_CAMERA_POSITION } from "./cameraPresets";
@@ -16,6 +20,42 @@ declare global {
   interface Window {
     /** Draw calls of the previous frame when the page is opened with ?debug. */
     __AAW_DRAW_CALLS__?: number;
+    /** Projected speech-bubble anchors when the page is opened with ?debug. */
+    __AAW_LABEL_ANCHORS__?: Record<
+      string,
+      { x: number; y: number; scale: number; onScreen: boolean }
+    >;
+    /** Compact simulation view for the phase verification scripts. */
+    __AAW_DEBUG_STATE__?: {
+      clock: number;
+      status: string;
+      links: Array<{ from: string; to: string; kind: string }>;
+      agents: Array<{
+        id: string;
+        name: string;
+        status: string;
+        activity: string;
+        paused: boolean;
+      }>;
+      tasks: Array<{
+        id: string;
+        title: string;
+        phase: string;
+        status: string;
+        iteration: number;
+        progress: number;
+      }>;
+      camera: { x: number; y: number; z: number };
+      ui: {
+        selectedAgentId: string | null;
+        selectedStationId: string | null;
+        hovered: string | null;
+        followAgentId: string | null;
+        activeTab: string;
+      };
+    };
+    /** Side panel render count when the page is opened with ?debug. */
+    __AAW_SIDE_PANEL_RENDERS__?: number;
   }
 }
 
@@ -43,12 +83,74 @@ function ReadySignal() {
  */
 function RenderStatsProbe() {
   const gl = useThree((state) => state.gl);
+  const camera = useThree((state) => state.camera);
   const enabled =
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).has("debug");
+  const lastPublish = useRef(0);
 
   useFrame(() => {
-    if (enabled) window.__AAW_DRAW_CALLS__ = gl.info.render.calls;
+    if (!enabled) return;
+    // Debug-only probe, throttled so it never changes the frame cost the
+    // phase checks are measuring.
+    const now = performance.now();
+    if (now - lastPublish.current < 200) return;
+    lastPublish.current = now;
+    window.__AAW_DRAW_CALLS__ = gl.info.render.calls;
+    const store = useWorldStore.getState();
+    const anchors: Record<
+      string,
+      { x: number; y: number; scale: number; onScreen: boolean }
+    > = {};
+    for (const id of AGENT_IDS) {
+      const anchor = labelAnchorFor(id);
+      anchors[id] = {
+        x: anchor.x,
+        y: anchor.y,
+        scale: anchor.scale,
+        onScreen: anchor.onScreen,
+      };
+    }
+    window.__AAW_LABEL_ANCHORS__ = anchors;
+    const snapshot = liveWorld.current;
+    if (snapshot) {
+      window.__AAW_DEBUG_STATE__ = {
+        clock: snapshot.clock,
+        status: snapshot.status,
+        links: snapshot.links.map((link) => ({
+          from: link.from,
+          to: link.to,
+          kind: link.kind,
+        })),
+        agents: snapshot.agents.map((agent) => ({
+          id: agent.id,
+          name: AGENT_BY_ID[agent.id].name,
+          status: agent.status,
+          activity: agent.activity,
+          paused: agent.paused,
+        })),
+        tasks: snapshot.tasks.map((task) => ({
+          id: task.id,
+          title: task.title,
+          phase: task.phase,
+          status: task.status,
+          iteration: task.iteration,
+          progress: task.progress,
+        })),
+        camera: {
+          x: camera.position.x,
+          y: camera.position.y,
+          z: camera.position.z,
+        },
+        ui: {
+          selectedAgentId: store.selectedAgentId,
+          selectedStationId: store.selectedStationId,
+          hovered: store.hovered,
+          followAgentId: store.followAgentId,
+          activeTab: store.activeTab,
+        },
+      };
+    }
   });
 
   return null;
@@ -98,6 +200,7 @@ export function WorldCanvas() {
         <Lighting />
         <OfficeEnvironment />
         <Workstations />
+        <AgentsLayer />
         <InteractionManager />
         <CameraController />
       </Canvas>

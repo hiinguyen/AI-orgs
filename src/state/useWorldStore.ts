@@ -127,6 +127,14 @@ export interface WorldStore {
   applyEvent: (event: AgentEvent) => void;
 }
 
+/** Focus point at the agent's current position, if the live world has one. */
+function agentFocusPoint(id: AgentId): CameraFocus | undefined {
+  const agent = liveWorld.current?.agents.find((entry) => entry.id === id);
+  return agent
+    ? { x: agent.position.x, y: 1, z: agent.position.z }
+    : undefined;
+}
+
 export function isAgentActive(agent: AgentState): boolean {
   if (agent.paused) return false;
   return (
@@ -187,13 +195,32 @@ export const useWorldStore = create<WorldStore>()((set) => {
 
     setActiveTab: (tab) => set({ activeTab: tab }),
 
+    // Every agent selection path (3D click, roster, activity jump, station
+    // panel) frames the agent the same way, and releases follow unless the
+    // selected agent is the one already being followed.
     selectAgent: (id) =>
-      set({
-        selectedAgentId: id,
-        selectedTaskId: null,
-        selectedStationId: null,
-        activeTab: "agents",
-      }),
+      set((state) =>
+        id === null
+          ? {
+              selectedAgentId: null,
+              selectedTaskId: null,
+              selectedStationId: null,
+              activeTab: "agents",
+            }
+          : {
+              selectedAgentId: id,
+              selectedTaskId: null,
+              selectedStationId: null,
+              activeTab: "agents",
+              followAgentId:
+                state.followAgentId === id ? state.followAgentId : null,
+              camera: {
+                nonce: state.camera.nonce + 1,
+                focus: agentFocusPoint(id),
+                distance: 7.5,
+              },
+            },
+      ),
 
     selectTask: (id) =>
       set({
@@ -254,23 +281,24 @@ export const useWorldStore = create<WorldStore>()((set) => {
         return { viewInsets: insets };
       }),
 
+    // A preset or a station focus is a deliberate camera move away from the
+    // followed agent, so follow must end with it. Otherwise the follow branch
+    // would pull the camera back once the move settles.
     requestCamera: (request) =>
       set((state) => ({
         camera: { ...request, nonce: state.camera.nonce + 1 },
+        followAgentId: null,
       })),
 
-    focusAgent: (id) => {
-      const agent = liveWorld.current?.agents.find((entry) => entry.id === id);
+    focusAgent: (id) =>
       set((state) => ({
         camera: {
           nonce: state.camera.nonce + 1,
-          focus: agent
-            ? { x: agent.position.x, y: 1, z: agent.position.z }
-            : undefined,
+          focus: agentFocusPoint(id),
           distance: 7.5,
         },
-      }));
-    },
+        followAgentId: state.followAgentId === id ? state.followAgentId : null,
+      })),
 
     setBackend: (patch) =>
       set((state) => ({ backend: { ...state.backend, ...patch } })),
