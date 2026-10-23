@@ -8,6 +8,8 @@ Fix the items below without redoing work that already passes.
 Status (paused on 2026-10-23 at the user's request, committed as a work-in-progress commit):
 - A first run reproduced item 1 in the browser (`.opencode-logs/phase5-review-fixes/repro-before-pan-down-1.jpg`: board face fully in view, all 12 cards gone after panning down) and then started the fixes.
 - It was stopped while splitting `Desks.tsx` (item 5): `npm run typecheck` and `npm test` (208 checks) pass, `npm run lint` fails in `Desks.tsx` ("Cannot access refs during render", "Cannot modify local variables after render completes").
+- Second run (2026-10-23, session deleted after being stopped by the user): only `Desks.tsx` items 4/5 changed (split + skip-write), `npm run lint` passes now.
+  Items 1, 2, 3, 6, 7, 8, 9 still need checking against the tree; nothing was verified in the browser.
 - When resuming: check every item below against the tree (some may be done or half done), fix the lint errors without reading refs during render, then run the full Verify list; nothing after the repro has been verified in the browser yet.
 
 Context budget (mandatory): never Read a full-size screenshot more than once.
