@@ -10,6 +10,7 @@ import {
 } from "@/tasks/taskActions";
 import type { TaskFilter } from "@/tasks/taskActions";
 import { commands } from "@/integrations/backendClient";
+import { isBridgeBackend, isCapabilityEnabled } from "@/integrations/AgentBackend";
 import { useWorldStore } from "@/state/useWorldStore";
 import { SegmentedControl } from "@/components/ui";
 import { TaskCard } from "./TaskCard";
@@ -22,6 +23,12 @@ export function TasksPanel() {
   const selectedTaskId = useWorldStore((state) => state.selectedTaskId);
   const selectTask = useWorldStore((state) => state.selectTask);
   const openTaskDialog = useWorldStore((state) => state.openTaskDialog);
+  const canSubmit = useWorldStore((state) =>
+    isCapabilityEnabled(state.backend.capabilities, "submitTask"),
+  );
+  const bridgeMode = useWorldStore((state) =>
+    isBridgeBackend(state.backend.simulated, state.backend.capabilities),
+  );
 
   const [filter, setFilter] = useState<TaskFilter>("all");
 
@@ -30,36 +37,38 @@ export function TasksPanel() {
 
   return (
     <div className="px-4 py-3.5">
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          className="btn btn-ghost h-7 px-2 text-[11px]"
-          onClick={() => openTaskDialog()}
-        >
-          <Plus aria-hidden="true" />
-          New task
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost h-7 px-2 text-[11px]"
-          onClick={() => {
-            void commands.runDemo();
-          }}
-        >
-          <Sparkles aria-hidden="true" />
-          Demo
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost h-7 px-2 text-[11px]"
-          onClick={() => {
-            void commands.loadSprint();
-          }}
-        >
-          <Layers aria-hidden="true" />
-          Sprint
-        </button>
-      </div>
+      {canSubmit && (
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            className="btn btn-ghost h-7 px-2 text-[11px]"
+            onClick={() => openTaskDialog()}
+          >
+            <Plus aria-hidden="true" />
+            New task
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost h-7 px-2 text-[11px]"
+            onClick={() => {
+              void commands.runDemo();
+            }}
+          >
+            <Sparkles aria-hidden="true" />
+            Demo
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost h-7 px-2 text-[11px]"
+            onClick={() => {
+              void commands.loadSprint();
+            }}
+          >
+            <Layers aria-hidden="true" />
+            Sprint
+          </button>
+        </div>
+      )}
 
       <SegmentedControl
         className="mt-3 flex w-full"
@@ -90,11 +99,13 @@ export function TasksPanel() {
       {visible.length === 0 && (
         <div className="surface-quiet mt-3 px-3 py-4 text-center">
           <p className="text-[12px] leading-5 text-mist-500">
-            {tasks.length === 0
-              ? "No tasks yet. Run the demo or add one to watch the workflow move."
-              : "No tasks match this filter."}
+            {bridgeMode
+              ? "Tasks are not part of bridge mode. This view follows the Claude Code session; agents and activity are in Overview and Agents."
+              : tasks.length === 0
+                ? "No tasks yet. Run the demo or add one to watch the workflow move."
+                : "No tasks match this filter."}
           </p>
-          {tasks.length === 0 && (
+          {tasks.length === 0 && canSubmit && (
             <button
               type="button"
               className="btn btn-primary mt-2.5"

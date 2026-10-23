@@ -16,6 +16,7 @@ import { isAgentCommunication } from "@/events/eventTypes";
 import { eventsForAgent } from "@/events/eventStore";
 import { LOCATIONS } from "@/simulation/worldLayout";
 import { commands } from "@/integrations/backendClient";
+import { isCapabilityEnabled } from "@/integrations/AgentBackend";
 import { useWorldStore } from "@/state/useWorldStore";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import {
@@ -39,6 +40,12 @@ export function AgentDetails({ agentId }: { agentId: AgentId }) {
   const focusAgent = useWorldStore((state) => state.focusAgent);
   const selectTask = useWorldStore((state) => state.selectTask);
   const openTaskDialog = useWorldStore((state) => state.openTaskDialog);
+  const canSubmit = useWorldStore((state) =>
+    isCapabilityEnabled(state.backend.capabilities, "submitTask"),
+  );
+  const canPauseAgent = useWorldStore((state) =>
+    isCapabilityEnabled(state.backend.capabilities, "pauseAgent"),
+  );
 
   const [view, setView] = useState<"activity" | "communication">("activity");
 
@@ -150,26 +157,30 @@ export function AgentDetails({ agentId }: { agentId: AgentId }) {
       </div>
 
       <div className="mt-2.5 grid grid-cols-2 gap-1.5">
-        <button
-          type="button"
-          className="btn btn-primary justify-start"
-          onClick={() => openTaskDialog(agent.id)}
-        >
-          <UserPlus aria-hidden="true" />
-          Assign task
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost justify-start"
-          onClick={togglePause}
-        >
-          {agent.paused ? (
-            <PlayCircle aria-hidden="true" />
-          ) : (
-            <PauseCircle aria-hidden="true" />
-          )}
-          {agent.paused ? "Resume agent" : "Pause agent"}
-        </button>
+        {canSubmit && (
+          <button
+            type="button"
+            className="btn btn-primary justify-start"
+            onClick={() => openTaskDialog(agent.id)}
+          >
+            <UserPlus aria-hidden="true" />
+            Assign task
+          </button>
+        )}
+        {canPauseAgent && (
+          <button
+            type="button"
+            className="btn btn-ghost justify-start"
+            onClick={togglePause}
+          >
+            {agent.paused ? (
+              <PlayCircle aria-hidden="true" />
+            ) : (
+              <PauseCircle aria-hidden="true" />
+            )}
+            {agent.paused ? "Resume agent" : "Pause agent"}
+          </button>
+        )}
         <button
           type="button"
           className={cn(

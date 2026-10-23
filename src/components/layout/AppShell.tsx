@@ -9,6 +9,7 @@ import {
 import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { connectBackend, commands } from "@/integrations/backendClient";
+import { isCapabilityEnabled } from "@/integrations/AgentBackend";
 import { useWorldStore } from "@/state/useWorldStore";
 import { pickInitialQuality } from "@/state/qualityPolicy";
 import {
@@ -211,10 +212,16 @@ export function AppShell() {
 
       switch (key) {
         case "n":
+          if (!isCapabilityEnabled(store.backend.capabilities, "submitTask")) {
+            break;
+          }
           event.preventDefault();
           store.openTaskDialog();
           break;
         case "b":
+          if (!isCapabilityEnabled(store.backend.capabilities, "submitTask")) {
+            break;
+          }
           event.preventDefault();
           void commands.loadSprint();
           break;

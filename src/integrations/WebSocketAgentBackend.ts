@@ -4,13 +4,22 @@ import type { AgentEvent } from "../events/eventTypes.ts";
 import type { CreateTaskInput, Task } from "../tasks/taskTypes.ts";
 import type {
   AgentBackend,
+  BackendCapabilities,
   BackendConnectionState,
   WorldSnapshot,
 } from "./AgentBackend.ts";
+import { DEFAULT_BACKEND_CAPABILITIES } from "./AgentBackend.ts";
 import { parseServerMessage, parseTask } from "./wsProtocol.ts";
 
 const CONNECT_TIMEOUT_MS = 10_000;
 const ACK_TIMEOUT_MS = 8_000;
+/** How long a first connection waits for hello before assuming all true. */
+const HELLO_GRACE_MS = 1_500;
+const NO_CAPABILITIES: BackendCapabilities = {
+  submitTask: false,
+  pauseAgent: false,
+  setSpeed: false,
+};
 const RECONNECT_BASE_MS = 500;
 const RECONNECT_MAX_MS = 10_000;
 
@@ -66,8 +75,16 @@ export class WebSocketAgentBackend implements AgentBackend {
   private reconnectEnabled = false;
 
   private connection: BackendConnectionState = { connected: false, error: null };
+  private capabilities: BackendCapabilities = {
+    ...DEFAULT_BACKEND_CAPABILITIES,
+  };
+  private helloSeen = false;
+  private helloTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly connectionListeners = new Set<
     (state: BackendConnectionState) => void
+  >();
+  private readonly capabilityListeners = new Set<
+    (capabilities: BackendCapabilities) => void
   >();
   private readonly pending = new Map<string, PendingCommand>();
   private readonly eventListeners = new Set<(event: AgentEvent) => void>();
@@ -121,6 +138,7 @@ export class WebSocketAgentBackend implements AgentBackend {
         clearTimeout(timer);
         this.reconnectDelayMs = this.reconnectBaseMs;
         this.reconnectEnabled = true;
+        this.awaitHello();
         this.setConnection({ connected: true, error: null });
         resolve();
       };
@@ -157,6 +175,7 @@ export class WebSocketAgentBackend implements AgentBackend {
 
   async disconnect(): Promise<void> {
     this.reconnectEnabled = false;
+    this.clearHelloTimer();
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -258,6 +277,58 @@ export class WebSocketAgentBackend implements AgentBackend {
     };
   }
 
+  getCapabilities(): BackendCapabilities {
+    return { ...this.capabilities };
+  }
+
+  subscribeCapabilities(
+    listener: (capabilities: BackendCapabilities) => void,
+  ): () => void {
+    this.capabilityListeners.add(listener);
+    return () => {
+      this.capabilityListeners.delete(listener);
+    };
+  }
+
+  /**
+   * A hello decides capabilities. After the first one, a reconnect keeps the
+   * last known set so controls do not flash. A backend that has never said
+   * hello starts with nothing, then falls back to every capability after a
+   * short grace period (older backends never send hello).
+   */
+  private awaitHello(): void {
+    this.clearHelloTimer();
+    if (this.helloSeen) return;
+    this.setCapabilities({ ...NO_CAPABILITIES });
+    this.helloTimer = setTimeout(() => {
+      this.helloTimer = null;
+      if (!this.helloSeen) {
+        this.setCapabilities({ ...DEFAULT_BACKEND_CAPABILITIES });
+      }
+    }, HELLO_GRACE_MS);
+  }
+
+  private clearHelloTimer(): void {
+    if (this.helloTimer !== null) {
+      clearTimeout(this.helloTimer);
+      this.helloTimer = null;
+    }
+  }
+
+  private setCapabilities(capabilities: BackendCapabilities): void {
+    if (
+      this.capabilities.submitTask === capabilities.submitTask &&
+      this.capabilities.pauseAgent === capabilities.pauseAgent &&
+      this.capabilities.setSpeed === capabilities.setSpeed
+    ) {
+      return;
+    }
+    this.capabilities = { ...capabilities };
+    for (const listener of this.capabilityListeners) {
+      listener({ ...capabilities });
+    }
+  }
+
   private setConnection(state: BackendConnectionState): void {
     if (
       this.connection.connected === state.connected &&
@@ -327,6 +398,11 @@ export class WebSocketAgentBackend implements AgentBackend {
     switch (message.kind) {
       case "invalid":
         console.warn(`[agent-backend] ${message.reason}`);
+        return;
+      case "hello":
+        this.helloSeen = true;
+        this.clearHelloTimer();
+        this.setCapabilities(message.capabilities);
         return;
       case "snapshot":
         this.snapshot = message.snapshot;

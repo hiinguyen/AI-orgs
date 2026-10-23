@@ -9,7 +9,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
     "test": "node --experimental-strip-types --no-warnings scripts/simulate.ts",
-    "live:fake": "node --experimental-strip-types --no-warnings scripts/fake-live-server.ts"
+    "live:fake": "node --experimental-strip-types --no-warnings scripts/fake-live-server.ts",
+    "bridge": "node --experimental-strip-types --no-warnings bridge/server.ts",
+    "bridge:replay": "node --experimental-strip-types --no-warnings scripts/replay-hooks.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.0",

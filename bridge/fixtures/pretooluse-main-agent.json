@@ -1,0 +1,13 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "/home/user/.claude/projects/example/fixture-session.jsonl",
+  "cwd": "/home/user/project",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Agent",
+  "tool_input": {
+    "description": "Review the authentication change",
+    "prompt": "Synthetic prompt placeholder",
+    "subagent_type": "code-reviewer"
+  },
+  "tool_use_id": "toolu_fixture_agent"
+}

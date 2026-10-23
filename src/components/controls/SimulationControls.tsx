@@ -12,6 +12,7 @@ import {
   VolumeX,
 } from "lucide-react";
 import { commands } from "@/integrations/backendClient";
+import { isCapabilityEnabled } from "@/integrations/AgentBackend";
 import { SIMULATION_CONFIG } from "@/simulation/simulationConfig";
 import { useWorldStore } from "@/state/useWorldStore";
 import { SegmentedControl, cn } from "@/components/ui";
@@ -22,6 +23,9 @@ export function SimulationControls() {
   const soundEnabled = useWorldStore((state) => state.sound.enabled);
   const setSound = useWorldStore((state) => state.setSound);
   const openTaskDialog = useWorldStore((state) => state.openTaskDialog);
+  const capabilities = useWorldStore((state) => state.backend.capabilities);
+  const canSubmit = isCapabilityEnabled(capabilities, "submitTask");
+  const canSetSpeed = isCapabilityEnabled(capabilities, "setSpeed");
 
   const [confirmReset, setConfirmReset] = useState(false);
   const resetButtonRef = useRef<HTMLButtonElement>(null);
@@ -85,14 +89,16 @@ export function SimulationControls() {
           <span className="hidden xl:inline">{runLabel}</span>
         </button>
 
-        <SegmentedControl
-          options={speedOptions}
-          value={String(speed)}
-          onChange={(value) => {
-            void commands.setSpeed(Number(value));
-          }}
-          ariaLabel="Simulation speed"
-        />
+        {canSetSpeed && (
+          <SegmentedControl
+            options={speedOptions}
+            value={String(speed)}
+            onChange={(value) => {
+              void commands.setSpeed(Number(value));
+            }}
+            ariaLabel="Simulation speed"
+          />
+        )}
 
         <button
           type="button"
@@ -150,50 +156,54 @@ export function SimulationControls() {
         )}
       </div>
 
-      <span
-        aria-hidden="true"
-        className="mx-0.5 hidden h-5 w-px bg-white/[0.08] sm:block"
-      />
+      {canSubmit && (
+        <>
+          <span
+            aria-hidden="true"
+            className="mx-0.5 hidden h-5 w-px bg-white/[0.08] sm:block"
+          />
 
-      {/* On phones the actions wrap as one deliberate row instead of leaving
-          the primary button alone on a line of its own. */}
-      <div className="flex items-center gap-0.5 max-sm:w-full max-sm:justify-between sm:gap-1">
-        <button
-          type="button"
-          className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
-          onClick={() => {
-            void commands.runDemo();
-          }}
-          aria-label="Run demo"
-          title="Run demo"
-        >
-          <Sparkles aria-hidden="true" />
-          <span className="hidden xl:inline">Run demo</span>
-        </button>
+          {/* On phones the actions wrap as one deliberate row instead of leaving
+              the primary button alone on a line of its own. */}
+          <div className="flex items-center gap-0.5 max-sm:w-full max-sm:justify-between sm:gap-1">
+            <button
+              type="button"
+              className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
+              onClick={() => {
+                void commands.runDemo();
+              }}
+              aria-label="Run demo"
+              title="Run demo"
+            >
+              <Sparkles aria-hidden="true" />
+              <span className="hidden xl:inline">Run demo</span>
+            </button>
 
-        <button
-          type="button"
-          className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
-          onClick={() => {
-            void commands.loadSprint();
-          }}
-          aria-label="Load sprint"
-          title="Load sprint"
-        >
-          <Layers aria-hidden="true" />
-          <span className="hidden xl:inline">Load sprint</span>
-        </button>
+            <button
+              type="button"
+              className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
+              onClick={() => {
+                void commands.loadSprint();
+              }}
+              aria-label="Load sprint"
+              title="Load sprint"
+            >
+              <Layers aria-hidden="true" />
+              <span className="hidden xl:inline">Load sprint</span>
+            </button>
 
-        <button
-          type="button"
-          className="btn btn-primary w-8 px-0 sm:w-auto sm:px-2.5"
-          onClick={() => openTaskDialog()}
-          aria-label="New task"
-        >
-          <Plus aria-hidden="true" />
-          <span className="hidden sm:inline">New task</span>
-        </button>
-      </div>
+            <button
+              type="button"
+              className="btn btn-primary w-8 px-0 sm:w-auto sm:px-2.5"
+              onClick={() => openTaskDialog()}
+              aria-label="New task"
+            >
+              <Plus aria-hidden="true" />
+              <span className="hidden sm:inline">New task</span>
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

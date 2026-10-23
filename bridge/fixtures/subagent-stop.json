@@ -1,0 +1,10 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "/home/user/.claude/projects/example/fixture-session.jsonl",
+  "cwd": "/home/user/project",
+  "hook_event_name": "SubagentStop",
+  "agent_id": "agent-fixture-1",
+  "agent_type": "code-reviewer",
+  "agent_transcript_path": "/home/user/.claude/projects/example/agent-fixture-1.jsonl",
+  "last_assistant_message": "Synthetic short review summary."
+}

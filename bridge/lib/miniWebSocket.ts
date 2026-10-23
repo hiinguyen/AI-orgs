@@ -1,7 +1,8 @@
 /**
  * The smallest useful server side of RFC 6455: the handshake accept value,
  * masked client frames and close frames. The repo deliberately installs no
- * `ws` package, so the fake live backend carries this instead of a dependency.
+ * `ws` package, so the fake live backend and the Claude Code bridge share this
+ * instead of a dependency.
  *
  * Protocol violations never stall the parser. `readFrames` reports the first
  * violation as a `WebSocketProtocolError` that carries the close code the
