@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { SIMULATION_CONFIG } from "@/simulation/simulationConfig";
 import { useWorldStore } from "@/state/useWorldStore";
+import { describeQuality } from "@/state/qualityPolicy";
 import { SegmentedControl, Switch, cn } from "@/components/ui";
 
 function SettingsSection({
@@ -74,6 +75,15 @@ export function SettingsPanel() {
   return (
     <div className="px-4 py-3.5">
       <SettingsSection title="Rendering">
+        <div className="mb-2 flex items-center justify-between gap-3 rounded-lg border border-white/[0.06] bg-ink-950/40 px-2.5 py-2">
+          <span className="eyebrow">Active mode</span>
+          <span
+            data-testid="quality-mode"
+            className="font-mono text-[10.5px] text-mist-300"
+          >
+            {describeQuality(quality, qualityAuto)}
+          </span>
+        </div>
         <SegmentedControl
           className="flex w-full"
           options={[

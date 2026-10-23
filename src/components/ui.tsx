@@ -331,7 +331,7 @@ export function SegmentedControl<T extends string>({
             onClick={() => onChange(option.value)}
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
-              "inline-flex items-center justify-center rounded-[6px] font-medium leading-none transition-colors",
+              "segmented-option inline-flex items-center justify-center rounded-[6px] font-medium leading-none transition-colors max-[900px]:min-w-10",
               grow && "flex-1",
               size === "sm"
                 ? "h-6 min-w-7 px-1.5 text-[11px]"
@@ -365,19 +365,23 @@ export function Switch({
       aria-checked={checked}
       aria-label={label}
       onClick={() => onChange(!checked)}
-      className={cn(
-        "relative h-5 w-9 shrink-0 rounded-full border transition-colors",
-        checked
-          ? "border-signal/40 bg-signal/70"
-          : "border-white/10 bg-white/[0.06]",
-      )}
+      className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full md:h-5 md:w-9"
     >
       <span
         className={cn(
-          "absolute top-[2px] h-3.5 w-3.5 rounded-full bg-mist-100 shadow-[0_1px_2px_rgba(0,0,0,0.5)] transition-[left] duration-150",
-          checked ? "left-[18px]" : "left-[2px]",
+          "relative block h-5 w-9 rounded-full border transition-colors",
+          checked
+            ? "border-signal/40 bg-signal/70"
+            : "border-white/10 bg-white/[0.06]",
         )}
-      />
+      >
+        <span
+          className={cn(
+            "absolute top-[2px] h-3.5 w-3.5 rounded-full bg-mist-100 shadow-[0_1px_2px_rgba(0,0,0,0.5)] transition-[left] duration-150",
+            checked ? "left-[18px]" : "left-[2px]",
+          )}
+        />
+      </span>
     </button>
   );
 }

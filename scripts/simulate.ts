@@ -15,6 +15,8 @@ import {
   runDemoSuite,
 } from "./tests/engine.ts";
 import { runAgentsSuite } from "./tests/agents.ts";
+import { runMotionSuite } from "./tests/motion.ts";
+import { runQualitySuite } from "./tests/quality.ts";
 import { runMirrorSuite } from "./tests/store.ts";
 import { runLifecycleSuite, runStateMachineSuite } from "./tests/workflow.ts";
 import type { TestReporter } from "./tests/harness.ts";
@@ -48,6 +50,8 @@ async function main(): Promise<void> {
   runAgentsSuite(reporter);
   runMirrorSuite(reporter);
   runBoardsSuite(reporter);
+  runQualitySuite(reporter);
+  runMotionSuite(reporter);
   await runBackendSuite(reporter);
 
   console.log("");

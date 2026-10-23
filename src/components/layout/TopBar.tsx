@@ -6,11 +6,12 @@ import { isTerminalPhase } from "@/tasks/taskTypes";
 import { pendingTasks } from "@/tasks/taskActions";
 import { SimulationControls } from "@/components/controls/SimulationControls";
 import { isAgentActive, useWorldStore } from "@/state/useWorldStore";
+import { describeQuality } from "@/state/qualityPolicy";
 import { Logo, cn } from "@/components/ui";
 
 function Metric({ label, value }: { label: string; value: number }) {
   return (
-    <div className="min-w-[42px]">
+    <div className="min-w-[38px] sm:min-w-[42px]">
       <p className="eyebrow">{label}</p>
       <p className="mt-1 flex h-[18px] items-center text-[18px] font-semibold leading-none tabular-nums text-mist-100">
         {value}
@@ -48,6 +49,8 @@ export function TopBar({
   );
   const status = useWorldStore((state) => state.simStatus);
   const backend = useWorldStore((state) => state.backend);
+  const quality = useWorldStore((state) => state.quality);
+  const qualityAuto = useWorldStore((state) => state.qualityAuto);
 
   const meta = STATUS_META[status];
   const live = !backend.simulated;
@@ -92,12 +95,12 @@ export function TopBar({
         </div>
       </div>
 
-      <div className="order-3 flex w-full items-center justify-between gap-4 sm:order-2 sm:w-auto sm:justify-start sm:gap-5">
+      <div className="order-3 flex w-full items-center justify-between gap-2 sm:order-2 sm:w-auto sm:justify-start sm:gap-5">
         <Metric label="Agents" value={agentCount} />
         <Metric label="Active" value={activeCount} />
         <Metric label="Pending" value={pendingCount} />
         <Metric label="Completed" value={completedCount} />
-        <div className="min-w-[64px]">
+        <div className="min-w-[54px] sm:min-w-[64px]">
           <p className="eyebrow">Status</p>
           <span className="mt-1 flex h-[18px] items-center gap-1.5 text-[11.5px] font-medium leading-none text-mist-300">
             <span
@@ -123,6 +126,13 @@ export function TopBar({
             <span className="truncate">{backend.error}</span>
           </span>
         )}
+        <span
+          data-testid="quality-label"
+          className="hidden items-center rounded-full border border-white/[0.08] bg-white/[0.03] px-2 py-1 font-mono text-[9.5px] leading-none text-mist-500 sm:inline-flex"
+          title="Active render quality"
+        >
+          {describeQuality(quality, qualityAuto)}
+        </span>
         <SimulationControls />
       </div>
     </header>

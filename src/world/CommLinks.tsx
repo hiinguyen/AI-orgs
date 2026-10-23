@@ -7,6 +7,7 @@ import type { AgentId } from "@/agents/agentTypes";
 import { AGENT_BY_ID } from "@/agents/AgentRegistry";
 import type { CommLink } from "@/integrations/AgentBackend";
 import { liveWorld } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import { agentVisuals } from "./agentVisuals";
 import { syncCommClock, type CommClockState } from "./commClock";
 import { geometries, sharedMaterial } from "./sharedResources";
@@ -306,6 +307,7 @@ function writePackets(
   slotIndex: number,
   link: CommLink,
   clock: number,
+  calm: boolean,
 ): void {
   const duration = Math.max(0.001, link.endsAt - link.startedAt);
   const progress = Math.min(
@@ -314,6 +316,26 @@ function writePackets(
   );
   const sender = AGENT_COLORS[link.from];
   const size = link.kind === "assign" ? PACKET_SCALE * 1.25 : PACKET_SCALE;
+
+  if (calm) {
+    // Reduced motion: one fixed glow at the middle of the arc, so the link is
+    // still visible without a travelling packet.
+    for (let packet = 0; packet < PACKETS_PER_LINK; packet += 1) {
+      const index = slotIndex * PACKETS_PER_LINK + packet;
+      if (packet !== 0) {
+        clearPacket(packets, index);
+        continue;
+      }
+      bezier(scratchPoint, scratchA, scratchC, scratchB, 0.5);
+      scratchDummy.position.copy(scratchPoint);
+      scratchDummy.rotation.set(0, 0, 0);
+      scratchDummy.scale.setScalar(size);
+      scratchDummy.updateMatrix();
+      packets.setMatrixAt(index, scratchDummy.matrix);
+      packets.setColorAt(index, sender);
+    }
+    return;
+  }
 
   for (let packet = 0; packet < PACKETS_PER_LINK; packet += 1) {
     const index = slotIndex * PACKETS_PER_LINK + packet;
@@ -374,6 +396,7 @@ export function CommLinks() {
 
     syncCommClock(clock.current, snapshot, delta);
     const active = selectLinks(snapshot.links, clock.current.clock);
+    const calm = reducedMotion.current;
 
     for (let slotIndex = 0; slotIndex < MAX_LINKS; slotIndex += 1) {
       const slot = slots[slotIndex];
@@ -384,7 +407,7 @@ export function CommLinks() {
         continue;
       }
       writeRibbon(slot, link);
-      writePackets(packetMesh, slotIndex, link, clock.current.clock);
+      writePackets(packetMesh, slotIndex, link, clock.current.clock, calm);
     }
 
     packetMesh.instanceMatrix.needsUpdate = true;

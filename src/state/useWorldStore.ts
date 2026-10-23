@@ -9,6 +9,9 @@ import type {
 import type { AgentEvent } from "@/events/eventTypes";
 import { appendEvent } from "@/events/eventStore";
 import { MIRROR_INTERVAL_MS, ThrottledMirror } from "./mirrorThrottle";
+import type { QualityMode } from "./qualityPolicy";
+
+export type { QualityMode } from "./qualityPolicy";
 
 /**
  * The mutable per-frame snapshot buffer. The 3D layer reads this inside
@@ -45,8 +48,6 @@ export interface ViewInsets {
   bottom: number;
   left: number;
 }
-
-export type QualityMode = "high" | "low";
 
 export interface BackendInfo {
   kind: "mock" | "websocket";
@@ -92,6 +93,8 @@ export interface WorldStore {
   overlays: OverlaySettings;
   quality: QualityMode;
   qualityAuto: boolean;
+  /** True once high quality has been active; the baked environment stays pooled. */
+  qualityEverHigh: boolean;
   sceneReady: boolean;
   viewInsets: ViewInsets;
   camera: CameraRequest;
@@ -178,8 +181,12 @@ export const useWorldStore = create<WorldStore>()((set) => {
     preferredAgentId: null,
 
     overlays: { walkingPaths: true, speechIndicators: true },
-    quality: "high",
+    // Low is the safe default until AppShell applies the device policy: the
+    // first Canvas commit must not build high-only resources on a phone, a
+    // reduced-motion session or a small CPU.
+    quality: "low",
     qualityAuto: true,
+    qualityEverHigh: false,
     sceneReady: false,
     viewInsets: { top: 0, right: 0, bottom: 0, left: 0 },
     camera: { nonce: 0 },
@@ -263,7 +270,12 @@ export const useWorldStore = create<WorldStore>()((set) => {
     setOverlays: (patch) =>
       set((state) => ({ overlays: { ...state.overlays, ...patch } })),
 
-    setQuality: (quality, auto) => set({ quality, qualityAuto: auto }),
+    setQuality: (quality, auto) =>
+      set((state) => ({
+        quality,
+        qualityAuto: auto,
+        qualityEverHigh: state.qualityEverHigh || quality === "high",
+      })),
 
     setSceneReady: (ready) => set({ sceneReady: ready }),
 

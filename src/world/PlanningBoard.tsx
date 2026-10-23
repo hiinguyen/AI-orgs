@@ -6,6 +6,7 @@ import * as THREE from "three";
 import { PLANNING_BOARD_CENTER } from "@/simulation/worldLayout";
 import type { WorldSnapshot } from "@/integrations/AgentBackend";
 import { liveWorld } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import { geometries, materials, sharedGeometry } from "./sharedResources";
 import {
   PLANNING_BOARD,
@@ -90,13 +91,14 @@ function writeCards(
   born: Map<string, number>,
   now: number,
   scratch: Scratch,
+  calm: boolean,
 ): Map<string, number> {
   const nextBorn = new Map<string, number>();
   for (let index = 0; index < cards.length; index += 1) {
     const card = cards[index];
     const bornAt = born.get(card.key) ?? now;
     nextBorn.set(card.key, bornAt);
-    writeCard(mesh, card, cardScale(now - bornAt), index, scratch);
+    writeCard(mesh, card, calm ? 1 : cardScale(now - bornAt), index, scratch);
   }
   mesh.count = cards.length;
   mesh.instanceMatrix.needsUpdate = true;
@@ -174,22 +176,31 @@ export function PlanningBoard() {
           signature.current = nextSignature;
           cards.current = nextCards;
           const now = performance.now() / 1000;
-          born.current = writeCards(mesh, nextCards, born.current, now, scratch);
-          animating.current = isAnimating(nextCards, born.current, now);
+          const calm = reducedMotion.current;
+          born.current = writeCards(
+            mesh,
+            nextCards,
+            born.current,
+            now,
+            scratch,
+            calm,
+          );
+          animating.current = !calm && isAnimating(nextCards, born.current, now);
         }
       }
     }
 
     if (!animating.current) return;
     const now = performance.now() / 1000;
+    const calm = reducedMotion.current;
     let stillAnimating = false;
     const current = cards.current;
     for (let index = 0; index < current.length; index += 1) {
       const card = current[index];
       const bornAt = born.current.get(card.key) ?? now;
       const age = now - bornAt;
-      writeCard(mesh, card, cardScale(age), index, scratch);
-      if (age < CARD_SCALE_SECONDS) stillAnimating = true;
+      writeCard(mesh, card, calm ? 1 : cardScale(age), index, scratch);
+      if (!calm && age < CARD_SCALE_SECONDS) stillAnimating = true;
     }
     mesh.instanceMatrix.needsUpdate = true;
     if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;

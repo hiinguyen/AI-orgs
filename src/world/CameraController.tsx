@@ -8,6 +8,7 @@ import * as THREE from "three";
 import type { AgentId } from "@/agents/agentTypes";
 import { useWorldStore } from "@/state/useWorldStore";
 import type { CameraPresetId, ViewInsets } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import { agentVisuals } from "./agentVisuals";
 import { CAMERA_LIMITS, CAMERA_PRESETS } from "./cameraPresets";
 
@@ -152,9 +153,24 @@ function followStep(
   camera: THREE.Camera,
   followId: AgentId,
   delta: number,
+  calm: boolean,
 ): void {
   const visual = agentVisuals[followId];
   scratchTarget.set(visual.x, 1, visual.z);
+  if (calm) {
+    // Reduced motion: follow is a snap, not a smooth chase. Shift the camera
+    // by the clamped target delta, otherwise the camera creeps away from the
+    // robot once the target stops at a limit.
+    const previousX = controls.target.x;
+    const previousY = controls.target.y;
+    const previousZ = controls.target.z;
+    controls.target.copy(scratchTarget);
+    clampTarget(controls.target);
+    camera.position.x += controls.target.x - previousX;
+    camera.position.y += controls.target.y - previousY;
+    camera.position.z += controls.target.z - previousZ;
+    return;
+  }
   const shiftX =
     THREE.MathUtils.damp(
       controls.target.x,
@@ -190,8 +206,16 @@ function goalStep(
   camera: THREE.Camera,
   goal: MoveGoal,
   delta: number,
+  calm: boolean,
 ): void {
   const target = goal.target;
+  if (calm) {
+    // Preset changes land immediately for reduced-motion users.
+    controls.target.copy(target);
+    camera.position.copy(goal.position);
+    goal.active = false;
+    return;
+  }
   controls.target.x = THREE.MathUtils.damp(
     controls.target.x,
     target.x,
@@ -362,13 +386,14 @@ export function CameraController() {
 
     const store = useWorldStore.getState();
     const followId = store.followAgentId;
+    const calm = reducedMotion.current;
 
     // A focus request that arrived with the follow toggle flies the camera in
     // first; once it settles, the follow branch keeps the resulting offset.
     if (followId !== null && !goal.current.active) {
-      followStep(controls, state.camera, followId, delta);
+      followStep(controls, state.camera, followId, delta, calm);
     } else if (goal.current.active) {
-      goalStep(controls, state.camera, goal.current, delta);
+      goalStep(controls, state.camera, goal.current, delta, calm);
     }
 
     clampTarget(controls.target);

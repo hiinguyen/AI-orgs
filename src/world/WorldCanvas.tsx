@@ -1,10 +1,12 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { PerformanceMonitor } from "@react-three/drei";
 import * as THREE from "three";
 import { liveWorld, useWorldStore } from "@/state/useWorldStore";
+import { shouldAutoFallback } from "@/state/qualityPolicy";
+import { reducedMotion } from "@/state/reducedMotion";
 import { AGENT_BY_ID } from "@/agents/AgentRegistry";
 import { AGENT_IDS } from "@/agents/agentTypes";
 import { labelAnchorFor } from "@/world/labelAnchors";
@@ -20,6 +22,20 @@ declare global {
   interface Window {
     /** Draw calls of the previous frame when the page is opened with ?debug. */
     __AAW_DRAW_CALLS__?: number;
+    /** Per-frame render totals and memory counters when ?debug is present. */
+    __AAW_RENDER_STATS__?: {
+      calls: number;
+      triangles: number;
+      points: number;
+      lines: number;
+      geometries: number;
+      textures: number;
+      programs: number;
+      dpr: number;
+      shadows: boolean;
+      environment: boolean;
+      frameMs: number | null;
+    };
     /** Projected speech-bubble anchors when the page is opened with ?debug. */
     __AAW_LABEL_ANCHORS__?: Record<
       string,
@@ -45,6 +61,7 @@ declare global {
         status: string;
         iteration: number;
         progress: number;
+        assignedAgentId: string | null;
         subtasks: Array<{ id: string; title: string; done: boolean }>;
       }>;
       camera: { x: number; y: number; z: number };
@@ -54,10 +71,15 @@ declare global {
         hovered: string | null;
         followAgentId: string | null;
         activeTab: string;
+        quality: string;
+        qualityAuto: boolean;
+        reducedMotion: boolean;
       };
     };
     /** Side panel render count when the page is opened with ?debug. */
     __AAW_SIDE_PANEL_RENDERS__?: number;
+    /** Debug-only quality setter used by the phase checks. */
+    __AAW_SET_QUALITY__?: (quality: "high" | "low", auto: boolean) => void;
   }
 }
 
@@ -86,19 +108,57 @@ function ReadySignal() {
 function RenderStatsProbe() {
   const gl = useThree((state) => state.gl);
   const camera = useThree((state) => state.camera);
+  const scene = useThree((state) => state.scene);
   const enabled =
     typeof window !== "undefined" &&
     new URLSearchParams(window.location.search).has("debug");
   const lastPublish = useRef(0);
+  const frameTotal = useRef(0);
+  const frameCount = useRef(0);
 
-  useFrame(() => {
+  // The manual quality hook is a debugging convenience, installed once and
+  // removed again: assigning it from the frame loop left a stale closure on
+  // window after the probe unmounted.
+  useEffect(() => {
     if (!enabled) return;
+    window.__AAW_SET_QUALITY__ = (quality, auto) => {
+      useWorldStore.getState().setQuality(quality, auto);
+    };
+    return () => {
+      delete window.__AAW_SET_QUALITY__;
+    };
+  }, [enabled]);
+
+  useFrame((_, delta) => {
+    if (!enabled) return;
+    frameTotal.current += delta;
+    frameCount.current += 1;
     // Debug-only probe, throttled so it never changes the frame cost the
     // phase checks are measuring.
     const now = performance.now();
     if (now - lastPublish.current < 200) return;
+    const frameMs =
+      frameCount.current > 0
+        ? (frameTotal.current / frameCount.current) * 1000
+        : null;
+    frameTotal.current = 0;
+    frameCount.current = 0;
     lastPublish.current = now;
-    window.__AAW_DRAW_CALLS__ = gl.info.render.calls;
+    const info = gl.info;
+    window.__AAW_DRAW_CALLS__ = info.render.calls;
+    window.__AAW_RENDER_STATS__ = {
+      calls: info.render.calls,
+      triangles: info.render.triangles,
+      points: info.render.points,
+      lines: info.render.lines,
+      geometries: info.memory.geometries,
+      textures: info.memory.textures,
+      programs: info.programs?.length ?? 0,
+      dpr: gl.getPixelRatio(),
+      shadows: gl.shadowMap.enabled,
+      environment: scene.environment !== null,
+      frameMs,
+    };
     const store = useWorldStore.getState();
     const anchors: Record<
       string,
@@ -139,6 +199,7 @@ function RenderStatsProbe() {
           status: task.status,
           iteration: task.iteration,
           progress: task.progress,
+          assignedAgentId: task.assignedAgentId,
           subtasks: task.subtasks.map((subtask) => ({
             id: subtask.id,
             title: subtask.title,
@@ -156,6 +217,9 @@ function RenderStatsProbe() {
           hovered: store.hovered,
           followAgentId: store.followAgentId,
           activeTab: store.activeTab,
+          quality: store.quality,
+          qualityAuto: store.qualityAuto,
+          reducedMotion: reducedMotion.current,
         },
       };
     }
@@ -202,7 +266,7 @@ export function WorldCanvas() {
             const store = useWorldStore.getState();
             // A forced ?quality=high or ?quality=low must not be overridden
             // by the performance monitor.
-            if (store.qualityAuto && store.quality !== "low") {
+            if (shouldAutoFallback(store.quality, store.qualityAuto)) {
               setQuality("low", true);
             }
           }}

@@ -1,5 +1,6 @@
 import type { AgentStatus } from "./agentTypes.ts";
 import { dampValue, animationTimeScale } from "./agentMath.ts";
+import { motionAmplitude } from "./motionPolicy.ts";
 
 /**
  * Procedural robot animation. Every animation state is a pure function that
@@ -100,17 +101,23 @@ function addWeighted(target: AgentPose, source: AgentPose, weight: number): void
 
 
 
-export function idlePose(pose: AgentPose, time: number, speed: number): void {
+export function idlePose(
+  pose: AgentPose,
+  time: number,
+  speed: number,
+  calm = false,
+): void {
   void speed;
-  const breath = Math.sin(time * 1.6);
-  pose.bodyLift = 0.006 + breath * 0.006;
+  const breath = motionAmplitude(calm, Math.sin(time * 1.6) * 0.006);
+  pose.bodyLift = 0.006 + breath;
   pose.bodyPitch = 0.012;
-  pose.headPitch = -0.02 + Math.sin(time * 0.7) * 0.03;
-  pose.headYaw = Math.sin(time * 0.45 + 1) * 0.14;
-  pose.headRoll = Math.sin(time * 0.6) * 0.02;
-  pose.armLeftX = Math.sin(time * 0.9) * 0.04 + 0.01;
+  pose.headPitch = -0.02 + motionAmplitude(calm, Math.sin(time * 0.7) * 0.03);
+  pose.headYaw = motionAmplitude(calm, Math.sin(time * 0.45 + 1) * 0.14);
+  pose.headRoll = motionAmplitude(calm, Math.sin(time * 0.6) * 0.02);
+  pose.armLeftX = motionAmplitude(calm, Math.sin(time * 0.9) * 0.04) + 0.01;
   pose.armLeftZ = -0.06;
-  pose.armRightX = -Math.sin(time * 0.9 + 0.4) * 0.04 + 0.01;
+  pose.armRightX =
+    motionAmplitude(calm, -Math.sin(time * 0.9 + 0.4) * 0.04) + 0.01;
   pose.armRightZ = 0.06;
   pose.legLeftX = 0;
   pose.legRightX = 0;
@@ -157,6 +164,7 @@ export function walkingPose(
   pose: AgentPose,
   walkPhase: number,
   speed: number,
+  calm = false,
 ): void {
   const moving = Math.max(0, speed);
   const amplitude = walkAmplitude(moving);
@@ -168,8 +176,9 @@ export function walkingPose(
   // the leg angle; lifting the torso here would also lift the feet.
   pose.bodyLift = 0;
   pose.bodyPitch = 0.05 + 0.02 * ratio;
-  pose.headPitch = -0.02 - Math.sin(walkPhase * 2) * 0.02 * ratio;
-  pose.headYaw = Math.sin(walkPhase * 0.5) * 0.04 * ratio;
+  pose.headPitch =
+    -0.02 - motionAmplitude(calm, Math.sin(walkPhase * 2) * 0.02 * ratio);
+  pose.headYaw = motionAmplitude(calm, Math.sin(walkPhase * 0.5) * 0.04 * ratio);
   pose.headRoll = 0;
   pose.armLeftX = -swing * ARM_SWING_RATIO;
   pose.armLeftZ = -0.07;
@@ -179,13 +188,18 @@ export function walkingPose(
   pose.legRightX = -swing;
 }
 
-export function workingPose(pose: AgentPose, time: number, speed: number): void {
+export function workingPose(
+  pose: AgentPose,
+  time: number,
+  speed: number,
+  calm = false,
+): void {
   void speed;
-  const typing = Math.sin(time * 9.5);
-  pose.bodyLift = 0.004 + Math.sin(time * 2.2) * 0.004;
+  const typing = motionAmplitude(calm, Math.sin(time * 9.5));
+  pose.bodyLift = 0.004 + motionAmplitude(calm, Math.sin(time * 2.2) * 0.004);
   pose.bodyPitch = 0.15;
   pose.headPitch = 0.17;
-  pose.headYaw = Math.sin(time * 0.8) * 0.03;
+  pose.headYaw = motionAmplitude(calm, Math.sin(time * 0.8) * 0.03);
   pose.headRoll = 0;
   // Arms reach forward and inwards, hands about a keyboard width apart.
   pose.armLeftX = -0.95 + typing * 0.12;
@@ -196,16 +210,21 @@ export function workingPose(pose: AgentPose, time: number, speed: number): void 
   pose.legRightX = 0;
 }
 
-export function thinkingPose(pose: AgentPose, time: number, speed: number): void {
+export function thinkingPose(
+  pose: AgentPose,
+  time: number,
+  speed: number,
+  calm = false,
+): void {
   void speed;
-  pose.bodyLift = 0.006 + Math.sin(time * 1.4) * 0.004;
+  pose.bodyLift = 0.006 + motionAmplitude(calm, Math.sin(time * 1.4) * 0.004);
   pose.bodyPitch = 0.02;
-  pose.headPitch = -0.06 + Math.sin(time * 0.9) * 0.02;
+  pose.headPitch = -0.06 + motionAmplitude(calm, Math.sin(time * 0.9) * 0.02);
   pose.headYaw = -0.18;
   pose.headRoll = 0.16;
   pose.armLeftX = 0.04;
   pose.armLeftZ = -0.08;
-  pose.armRightX = -1.92 + Math.sin(time * 1.2) * 0.05;
+  pose.armRightX = -1.92 + motionAmplitude(calm, Math.sin(time * 1.2) * 0.05);
   pose.armRightZ = -0.55;
   pose.legLeftX = 0;
   pose.legRightX = 0;
@@ -215,14 +234,15 @@ export function communicatingPose(
   pose: AgentPose,
   time: number,
   speed: number,
+  calm = false,
 ): void {
   void speed;
-  const gesture = Math.sin(time * 3.2);
-  pose.bodyLift = 0.008 + Math.sin(time * 1.9) * 0.005;
+  const gesture = motionAmplitude(calm, Math.sin(time * 3.2));
+  pose.bodyLift = 0.008 + motionAmplitude(calm, Math.sin(time * 1.9) * 0.005);
   pose.bodyPitch = 0.035;
   pose.headPitch = -0.03;
-  pose.headYaw = Math.sin(time * 2.1) * 0.08;
-  pose.headRoll = 0.03 * Math.sin(time * 1.6);
+  pose.headYaw = motionAmplitude(calm, Math.sin(time * 2.1) * 0.08);
+  pose.headRoll = motionAmplitude(calm, 0.03 * Math.sin(time * 1.6));
   pose.armLeftX = -0.22;
   pose.armLeftZ = -0.06;
   pose.armRightX = -1.12 + gesture * 0.16;
@@ -231,13 +251,18 @@ export function communicatingPose(
   pose.legRightX = 0;
 }
 
-export function successPose(pose: AgentPose, time: number, speed: number): void {
+export function successPose(
+  pose: AgentPose,
+  time: number,
+  speed: number,
+  calm = false,
+): void {
   void speed;
-  const bounce = Math.abs(Math.sin(time * 5.4));
+  const bounce = motionAmplitude(calm, Math.abs(Math.sin(time * 5.4)));
   pose.bodyLift = bounce * 0.16;
   pose.bodyPitch = -0.02;
   pose.headPitch = -0.12;
-  pose.headYaw = Math.sin(time * 2.6) * 0.04;
+  pose.headYaw = motionAmplitude(calm, Math.sin(time * 2.6) * 0.04);
   pose.headRoll = 0;
   pose.armLeftX = -2.45;
   pose.armLeftZ = -0.55;
@@ -247,12 +272,17 @@ export function successPose(pose: AgentPose, time: number, speed: number): void 
   pose.legRightX = -0.04;
 }
 
-export function errorPose(pose: AgentPose, time: number, speed: number): void {
+export function errorPose(
+  pose: AgentPose,
+  time: number,
+  speed: number,
+  calm = false,
+): void {
   void speed;
-  pose.bodyLift = 0.002 + Math.sin(time * 1.3) * 0.002;
+  pose.bodyLift = 0.002 + motionAmplitude(calm, Math.sin(time * 1.3) * 0.002);
   pose.bodyPitch = 0.22;
   pose.headPitch = 0.36;
-  pose.headYaw = Math.sin(time * 0.7) * 0.03;
+  pose.headYaw = motionAmplitude(calm, Math.sin(time * 0.7) * 0.03);
   pose.headRoll = 0.04;
   pose.armLeftX = 0.12;
   pose.armLeftZ = -0.04;
@@ -274,31 +304,32 @@ export function poseForState(
   speed: number,
   legLength: number = DEFAULT_LEG_LENGTH,
   walkPhase?: number,
+  calm = false,
 ): void {
   switch (state) {
     case "idle":
-      idlePose(pose, time, speed);
+      idlePose(pose, time, speed, calm);
       return;
     case "walking": {
       const phase =
         walkPhase ?? time * walkCadence(speed, legLength) * Math.PI;
-      walkingPose(pose, phase, speed);
+      walkingPose(pose, phase, speed, calm);
       return;
     }
     case "working":
-      workingPose(pose, time, speed);
+      workingPose(pose, time, speed, calm);
       return;
     case "thinking":
-      thinkingPose(pose, time, speed);
+      thinkingPose(pose, time, speed, calm);
       return;
     case "communicating":
-      communicatingPose(pose, time, speed);
+      communicatingPose(pose, time, speed, calm);
       return;
     case "success":
-      successPose(pose, time, speed);
+      successPose(pose, time, speed, calm);
       return;
     case "error":
-      errorPose(pose, time, speed);
+      errorPose(pose, time, speed, calm);
       return;
   }
 }
@@ -339,6 +370,8 @@ export class AgentAnimator {
    * Advance the animation clock and blend towards `status`. `frozen` is true
    * while the agent or the simulation is paused: the clock and the blend run
    * at 15 per cent speed so the character settles instead of freezing rigid.
+   * `calm` removes decorative oscillation for reduced-motion users; walking
+   * keeps its speed-driven stride because that is information.
    */
   update(
     delta: number,
@@ -346,6 +379,7 @@ export class AgentAnimator {
     speed: number,
     frozen: boolean,
     legLength: number = DEFAULT_LEG_LENGTH,
+    calm = false,
   ): AgentPose {
     const step =
       Math.min(Math.max(delta, 0), MAX_STEP_SECONDS) *
@@ -380,6 +414,7 @@ export class AgentAnimator {
         speed,
         legLength,
         this.walkPhaseValue,
+        calm,
       );
       addWeighted(this.pose, this.scratch, weight / total);
     }
@@ -395,8 +430,9 @@ export function poseFor(
   speed: number,
   legLength: number = DEFAULT_LEG_LENGTH,
   walkPhase?: number,
+  calm = false,
 ): AgentPose {
   const pose = createPose();
-  poseForState(state, pose, time, speed, legLength, walkPhase);
+  poseForState(state, pose, time, speed, legLength, walkPhase, calm);
   return pose;
 }

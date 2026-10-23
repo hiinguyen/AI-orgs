@@ -61,7 +61,7 @@ export function CameraBar({ className }: { className?: string }) {
             title={preset.label}
             onClick={() => requestCamera({ preset: preset.id })}
             className={cn(
-              "shrink-0 rounded-full px-2 py-1.5 text-[10.5px] leading-none transition-colors sm:px-3 sm:text-[11px]",
+              "camera-preset shrink-0 rounded-full px-2 py-1.5 text-[10.5px] leading-none transition-colors sm:px-3 sm:text-[11px]",
               active
                 ? "bg-white/[0.12] text-mist-100 shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]"
                 : "text-mist-500 hover:bg-white/[0.04] hover:text-mist-100",

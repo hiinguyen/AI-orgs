@@ -4,8 +4,10 @@ import { useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { animationTimeScale } from "@/agents/agentMath";
+import { motionAmplitude, motionLevel } from "@/agents/motionPolicy";
 import { HUB_CENTER } from "@/simulation/worldLayout";
 import { liveWorld } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import { agentFrozen, findAgentState } from "./agentVisuals";
 import {
   geometries,
@@ -18,7 +20,8 @@ import {
  * Round operations console. The ring assembly glows calmly while Orion is
  * idle and pulses while he is working or moving. The pulse runs on real time
  * so the speed multiplier does not change its rhythm; the same freeze
- * condition as the robots' animator slows it to 0.15x.
+ * condition as the robots' animator slows it to 0.15x. Under reduced motion
+ * the ring holds a fixed level instead of pulsing.
  */
 
 const ACTIVE_PULSE_SPEED = 3.2;
@@ -51,18 +54,30 @@ export function OperationsHub() {
       ? findAgentState(snapshot.agents, "orion")
       : undefined;
     const active = orion !== undefined && !orion.paused && orion.status !== "idle";
-    const timeScale = animationTimeScale(
-      agentFrozen(orion, snapshot?.status === "running"),
-    );
+    const calm = reducedMotion.current;
+    const timeScale = calm
+      ? 0
+      : animationTimeScale(
+          agentFrozen(orion, snapshot?.status === "running"),
+        );
     phase.current += delta * timeScale;
 
     const t = phase.current;
-    const pulse = active
-      ? 1 + Math.sin(t * ACTIVE_PULSE_SPEED) * 0.035
-      : 1 + Math.sin(t * IDLE_PULSE_SPEED) * 0.008;
-    hubRingMaterial.emissiveIntensity = active
-      ? 2.35 + Math.sin(t * ACTIVE_PULSE_SPEED) * 0.55
-      : 1.95 + Math.sin(t * IDLE_PULSE_SPEED) * 0.12;
+    const pulse =
+      1 +
+      motionAmplitude(
+        calm,
+        active
+          ? Math.sin(t * ACTIVE_PULSE_SPEED) * 0.035
+          : Math.sin(t * IDLE_PULSE_SPEED) * 0.008,
+      );
+    hubRingMaterial.emissiveIntensity = motionLevel(
+      calm,
+      active
+        ? 2.35 + Math.sin(t * ACTIVE_PULSE_SPEED) * 0.55
+        : 1.95 + Math.sin(t * IDLE_PULSE_SPEED) * 0.12,
+      active ? 2.35 : 1.95,
+    );
     if (ringRef.current) ringRef.current.scale.setScalar(pulse);
   });
 

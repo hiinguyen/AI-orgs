@@ -10,6 +10,11 @@ import type { ReactNode } from "react";
 import dynamic from "next/dynamic";
 import { connectBackend, commands } from "@/integrations/backendClient";
 import { useWorldStore } from "@/state/useWorldStore";
+import { pickInitialQuality } from "@/state/qualityPolicy";
+import {
+  initReducedMotion,
+  reducedMotion,
+} from "@/state/reducedMotion";
 import { CameraBar } from "@/components/controls/CameraBar";
 import { NavRail } from "./NavRail";
 import { TopBar } from "./TopBar";
@@ -75,17 +80,16 @@ function PanelProfiler({
   );
 }
 
-function pickInitialQuality(): { quality: "high" | "low"; auto: boolean } {
-  const params = new URLSearchParams(window.location.search);
-  const forced = params.get("quality");
-  if (forced === "high" || forced === "low") {
-    return { quality: forced, auto: false };
-  }
-  const lowByDevice =
-    window.innerWidth < 768 ||
-    window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
-    (navigator.hardwareConcurrency ?? 8) <= 4;
-  return { quality: lowByDevice ? "low" : "high", auto: true };
+function pickInitialQualityFromBrowser(): {
+  quality: "high" | "low";
+  auto: boolean;
+} {
+  return pickInitialQuality({
+    search: window.location.search,
+    width: window.innerWidth,
+    reducedMotion: reducedMotion.current,
+    hardwareConcurrency: navigator.hardwareConcurrency,
+  });
 }
 
 export function AppShell() {
@@ -97,9 +101,16 @@ export function AppShell() {
   const panelRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
-    const initial = pickInitialQuality();
+    // The live reduced-motion flag must exist before the first quality pick:
+    // it is one of the inputs to the low path decision.
+    const stopReducedMotion = initReducedMotion();
+    const initial = pickInitialQualityFromBrowser();
     useWorldStore.getState().setQuality(initial.quality, initial.auto);
-    return connectBackend();
+    const stopBackend = connectBackend();
+    return () => {
+      stopReducedMotion();
+      stopBackend();
+    };
   }, []);
 
   useEffect(() => {
@@ -112,6 +123,9 @@ export function AppShell() {
       const width = window.innerWidth;
       const height = window.innerHeight;
       const desktop = window.matchMedia("(min-width: 768px)").matches;
+      // Rects are viewport-relative, so they already include `.app-safe`
+      // padding and the safe-area insets. The insets below are the covered
+      // edges the camera fit has to avoid; do not add the padding again.
       const nav = navRef.current?.getBoundingClientRect();
       const top = topRef.current?.getBoundingClientRect();
       const panel = panelRef.current?.getBoundingClientRect();
@@ -218,7 +232,7 @@ export function AppShell() {
       <WorldCanvas />
       <AgentLabelsOverlay />
 
-      <div className="pointer-events-none absolute inset-0 flex flex-col gap-2 p-2 md:flex-row md:gap-3 md:p-3">
+      <div className="app-safe pointer-events-none absolute inset-0 flex flex-col gap-2 md:flex-row md:gap-3">
         <NavRail
           ref={navRef}
           className="pointer-events-auto order-last md:order-first"
@@ -229,7 +243,7 @@ export function AppShell() {
 
           <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-2 md:flex-row md:gap-3">
             <div className="relative min-h-0 min-w-0 flex-1">
-              <CameraBar className="pointer-events-auto absolute bottom-0 left-0" />
+              <CameraBar className="pointer-events-auto absolute bottom-0 left-0 max-w-full" />
             </div>
             <PanelProfiler enabled={panelProbe}>
               <SidePanel ref={panelRef} className="pointer-events-auto" />

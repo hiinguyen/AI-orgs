@@ -5,6 +5,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 import { useWorldStore } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import { FLOOR } from "@/simulation/worldLayout";
 import {
   geometries,
@@ -15,6 +16,8 @@ import {
 import { skyTexture } from "./proceduralTextures";
 
 const MAX_DUST = 260;
+/** One instanced mesh holds the full skyline; quality only changes the count. */
+const MAX_TOWERS = 260;
 
 function makeRandom(seed: number): () => number {
   let state = seed >>> 0;
@@ -222,6 +225,9 @@ function Skyline({ count }: { count: number }) {
   useLayoutEffect(() => {
     const target = mesh.current;
     if (!target) return;
+    // Keep the mesh mounted across a quality switch: changing its instance
+    // count is free, while a keyed remount would dispose and rebuild buffers.
+    target.count = count;
     const random = makeRandom(0x20261018);
     const dummy = new THREE.Object3D();
     const color = new THREE.Color();
@@ -263,8 +269,8 @@ function Skyline({ count }: { count: number }) {
   return (
     <instancedMesh
       ref={mesh}
-      key={count}
-      args={[geometries.box, materials.skyline, count]}
+      args={[geometries.box, materials.skyline, MAX_TOWERS]}
+      count={count}
     />
   );
 }
@@ -369,6 +375,9 @@ function Dust({ count }: { count: number }) {
   const elapsed = useRef(0);
 
   useFrame((_, delta) => {
+    // Reduced motion freezes the motes where they are; the points still
+    // render, they just stop drifting.
+    if (reducedMotion.current) return;
     elapsed.current += delta;
     const attribute = geometry.getAttribute("position") as THREE.BufferAttribute;
     const array = attribute.array as Float32Array;

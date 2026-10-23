@@ -20,6 +20,46 @@ const HEADER_HEIGHT = 104;
 const MUTED = "rgba(183, 193, 207, 0.82)";
 const FAINT = "rgba(124, 196, 214, 0.16)";
 const PANEL = "rgba(12, 24, 38, 0.62)";
+const FALLBACK_SANS = "system-ui, sans-serif";
+
+/**
+ * Resolved UI sans family for the wall. The app sets `--font-sans` from the
+ * Next font class; canvas text does not inherit it and the literal "Inter"
+ * only works when the OS happens to have that family installed.
+ */
+let sansFamily = FALLBACK_SANS;
+
+/** Build a canvas font shorthand from the resolved family. */
+export function missionSans(size: number, weight: number = 400): string {
+  return `${weight} ${size}px ${sansFamily}`;
+}
+
+/**
+ * Resolve `--font-sans` once from the document root. Values that still hold a
+ * `var()` reference (for example the Next font variable) are expanded from the
+ * same scope, and anything unresolved falls back to system-ui.
+ */
+export function resolveMissionFont(): string {
+  if (typeof document === "undefined") {
+    sansFamily = FALLBACK_SANS;
+    return sansFamily;
+  }
+  const root = getComputedStyle(document.documentElement);
+  const raw = root.getPropertyValue("--font-sans").trim();
+  if (raw.length === 0) {
+    sansFamily = FALLBACK_SANS;
+    return sansFamily;
+  }
+  const expanded = raw.replace(
+    /var\(\s*(--[A-Za-z0-9_-]+)\s*(?:,[^)]*)?\)/g,
+    (match, name: string) => {
+      const value = root.getPropertyValue(name).trim();
+      return value.length > 0 ? value : match;
+    },
+  );
+  sansFamily = expanded.includes("var(") ? FALLBACK_SANS : expanded;
+  return sansFamily;
+}
 
 const CHART = {
   top: 220,
@@ -97,7 +137,7 @@ function drawHeader(ctx: CanvasRenderingContext2D, view: MissionView): void {
   ctx.fill();
 
   ctx.fillStyle = "#f2f6fb";
-  ctx.font = "700 64px Inter, system-ui, sans-serif";
+  ctx.font = missionSans(64, 700);
   const title = "MISSION CONTROL";
   ctx.fillText(title, 68, 56);
   const titleWidth = ctx.measureText(title).width;
@@ -146,7 +186,7 @@ function sectionTitle(
 ): void {
   ctx.textAlign = "left";
   ctx.fillStyle = "rgba(183, 193, 207, 0.9)";
-  ctx.font = "700 30px Inter, system-ui, sans-serif";
+  ctx.font = missionSans(30, 700);
   ctx.fillText(text, x, 152);
 }
 
@@ -304,7 +344,7 @@ function drawHeroTask(
   ctx.fillRect(x, y + 2, 7, height - 4);
 
   ctx.fillStyle = "#eef2f7";
-  ctx.font = "700 46px Inter, system-ui, sans-serif";
+  ctx.font = missionSans(46, 700);
   const lines = wrapText(ctx, task.title, width - 48, 2);
   lines.forEach((line, index) => {
     ctx.fillText(line, x + 24, y + 52 + index * 52);
@@ -333,7 +373,7 @@ function drawCompactTask(
   ctx.fillRect(x, y + 2, 6, TASK_PANEL.rowHeight - 4);
 
   ctx.fillStyle = "#eef2f7";
-  ctx.font = "700 32px Inter, system-ui, sans-serif";
+  ctx.font = missionSans(32, 700);
   ctx.fillText(fitText(ctx, task.title, width - 48), x + 24, y + 36);
 
   ctx.fillStyle = task.color;
@@ -402,16 +442,16 @@ function drawRosterCell(
   ctx.roundRect(x + 16, y + 16, 46, 46, 10);
   ctx.fill();
   ctx.fillStyle = "#071016";
-  ctx.font = "700 24px Inter, system-ui, sans-serif";
+  ctx.font = missionSans(24, 700);
   ctx.textAlign = "center";
   ctx.fillText(agent.name.slice(0, 1), x + 39, y + 31);
   ctx.textAlign = "left";
 
   ctx.fillStyle = "#eef2f7";
-  ctx.font = "700 34px Inter, system-ui, sans-serif";
+  ctx.font = missionSans(34, 700);
   ctx.fillText(agent.name, x + 76, y + 44);
   ctx.fillStyle = MUTED;
-  ctx.font = "15px Inter, system-ui, sans-serif";
+  ctx.font = missionSans(15);
   ctx.fillText(agent.roleLabel, x + 76, y + 70);
 
   ctx.fillStyle = agent.statusColor;

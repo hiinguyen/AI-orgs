@@ -1,7 +1,7 @@
 "use client";
 
-import type { Ref } from "react";
-import { ChevronLeft } from "lucide-react";
+import { useState, type Ref } from "react";
+import { ChevronDown, ChevronLeft, ChevronUp } from "lucide-react";
 import { feedEvents } from "@/events/eventStore";
 import { useWorldStore } from "@/state/useWorldStore";
 import type { TabId } from "@/state/useWorldStore";
@@ -36,6 +36,7 @@ export function SidePanel({
   const selectedTaskId = useWorldStore((state) => state.selectedTaskId);
   const selectedStationId = useWorldStore((state) => state.selectedStationId);
   const clearSelection = useWorldStore((state) => state.clearSelection);
+  const [collapsed, setCollapsed] = useState(false);
   // Only the Activity tab needs the count. Selecting a number keeps feed
   // updates from re-rendering the panel shell on the other four tabs.
   const feedCount = useWorldStore((state) =>
@@ -87,7 +88,9 @@ export function SidePanel({
       ref={ref}
       aria-label={`${title} panel`}
       className={cn(
-        "surface flex h-[40dvh] w-full shrink-0 flex-col overflow-hidden rounded-2xl md:h-auto md:w-[clamp(384px,27vw,400px)]",
+        "surface flex w-full shrink-0 flex-col overflow-hidden rounded-2xl",
+        collapsed ? "h-11" : "h-[40dvh]",
+        "md:h-auto md:w-[clamp(384px,27vw,400px)]",
         className,
       )}
     >
@@ -102,16 +105,37 @@ export function SidePanel({
             <ChevronLeft aria-hidden="true" size={16} />
           </button>
         )}
-        <h2 className="text-[13px] font-semibold tracking-tight text-mist-100">
+        <h2 className="truncate text-[13px] font-semibold tracking-tight text-mist-100">
           {title}
         </h2>
-        {activeTab === "activity" && (
-          <span className="ml-auto font-mono text-[9.5px] uppercase tracking-[0.08em] text-mist-500">
-            {feedCount} entries
-          </span>
-        )}
+        <div className="ml-auto flex items-center gap-1">
+          {activeTab === "activity" && (
+            <span className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-mist-500">
+              {feedCount} entries
+            </span>
+          )}
+          <button
+            type="button"
+            className="btn btn-quiet h-8 w-8 px-0 md:hidden"
+            onClick={() => setCollapsed((current) => !current)}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? "Expand panel" : "Collapse panel"}
+            title={collapsed ? "Expand panel" : "Collapse panel"}
+          >
+            {collapsed ? (
+              <ChevronUp aria-hidden="true" size={16} />
+            ) : (
+              <ChevronDown aria-hidden="true" size={16} />
+            )}
+          </button>
+        </div>
       </header>
-      <div className="scroll-thin min-h-0 flex-1 overflow-y-auto">
+      <div
+        className={cn(
+          "scroll-thin min-h-0 flex-1 overflow-y-auto",
+          collapsed && "max-md:hidden",
+        )}
+      >
         {content}
       </div>
     </aside>

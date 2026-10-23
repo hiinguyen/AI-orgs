@@ -9,6 +9,7 @@ import {
 } from "@/agents/agentTypes";
 import { AGENT_BY_ID } from "@/agents/AgentRegistry";
 import { useWorldStore, type ViewInsets } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import { labelAnchorFor } from "@/world/labelAnchors";
 import { cn } from "@/components/ui";
 
@@ -240,9 +241,6 @@ export function AgentLabelsOverlay() {
       transforms: new Array<string | null>(AGENT_IDS.length).fill(null),
     };
     resetAnchorMemory();
-    const reducedMotion = window.matchMedia(
-      "(prefers-reduced-motion: reduce)",
-    ).matches;
     const disconnect = measureBubbles(bubbleRefs.current, bubbleSizes.current);
 
     const tick = (now: number) => {
@@ -258,7 +256,14 @@ export function AgentLabelsOverlay() {
         window.innerWidth,
         window.innerHeight,
       );
-      writeBubbles(bubbleRefs.current, frame, elapsed, reducedMotion);
+      // Read the live flag, not a mount-time copy: the OS setting can change
+      // while the page is open.
+      writeBubbles(
+        bubbleRefs.current,
+        frame,
+        elapsed,
+        reducedMotion.current,
+      );
     };
 
     const removeEffect = addAfterEffect(tick);
