@@ -27,7 +27,7 @@ function samePose(
   );
 }
 
-export function runMotionSuite(reporter: TestReporter): void {
+export function runReducedMotionSuite(reporter: TestReporter): void {
   const { check, group } = reporter;
   group("Reduced motion policy");
 

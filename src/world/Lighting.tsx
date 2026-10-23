@@ -103,14 +103,11 @@ export function Lighting() {
   useLayoutEffect(() => {
     const light = shadowLight.current;
     if (!light || high) return;
-    // Turning castShadow off leaves `light.shadow.map` (a 2048 square render
-    // target) allocated in three. Dispose it so low quality really costs
-    // nothing; three recreates it when high quality returns.
-    const map = light.shadow.map;
-    if (map) {
-      map.dispose();
-      light.shadow.map = null;
-    }
+    // Turning castShadow off leaves the shadow render target allocated in
+    // three. Dispose the whole shadow and clear the map so low quality really
+    // costs nothing; three recreates both when high quality returns.
+    light.shadow.dispose();
+    light.shadow.map = null;
   }, [high]);
 
   return (
@@ -179,6 +176,8 @@ export function Lighting() {
           <Environment resolution={128} frames={1} environmentIntensity={0.9}>
             {ENVIRONMENT_CHILDREN}
           </Environment>
+          {/* EnvironmentGate must stay after <Environment>: the gate detaches
+              the baked cube the Environment just attached. */}
           <EnvironmentGate enabled={high} />
         </>
       )}

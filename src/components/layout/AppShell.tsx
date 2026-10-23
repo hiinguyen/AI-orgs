@@ -22,6 +22,7 @@ import { LoadingScreen } from "./LoadingScreen";
 import { SidePanel } from "@/components/panels/SidePanel";
 import { TaskDialog } from "@/components/panels/TaskDialog";
 import { AgentLabelsOverlay } from "@/components/world/AgentLabelsOverlay";
+import { useSoundEffects } from "@/audio/useSoundEffects";
 
 const WorldCanvas = dynamic(
   () => import("@/world/WorldCanvas").then((module) => module.WorldCanvas),
@@ -93,6 +94,7 @@ function pickInitialQualityFromBrowser(): {
 }
 
 export function AppShell() {
+  useSoundEffects();
   const sceneReady = useWorldStore((state) => state.sceneReady);
   const backendConnected = useWorldStore((state) => state.backend.connected);
   const panelProbe = usePanelRenderProbe();
@@ -182,15 +184,22 @@ export function AppShell() {
 
       const target = event.target;
       if (target instanceof HTMLElement) {
-        // Never steal a key from a focused control: Space activates the
-        // focused button, radio or tab instead of pausing the simulation.
-        const interactive = target.closest(
-          'button, a, [role="radio"], [role="tab"], [role="dialog"], input, textarea, select, [contenteditable]',
+        // Typing must never trigger a global shortcut.
+        const typing = target.closest(
+          'input, textarea, select, [contenteditable]',
         );
-        if (interactive !== null) return;
+        if (typing !== null) return;
       }
 
       if (event.code === "Space" || key === " ") {
+        // Space activates the focused button, radio or tab instead of
+        // pausing the simulation.
+        if (
+          target instanceof HTMLElement &&
+          target.closest('button, a, [role="radio"], [role="tab"]') !== null
+        ) {
+          return;
+        }
         event.preventDefault();
         if (store.simStatus === "running") {
           void commands.pause();
@@ -212,9 +221,6 @@ export function AppShell() {
         case "m":
           event.preventDefault();
           store.setSound({ enabled: !store.sound.enabled });
-          break;
-        case "escape":
-          store.clearSelection();
           break;
         default:
           break;

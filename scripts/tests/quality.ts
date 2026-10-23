@@ -9,6 +9,11 @@ import {
   pickInitialQuality,
   shouldAutoFallback,
 } from "../../src/state/qualityPolicy.ts";
+import {
+  initReducedMotion,
+  reducedMotion,
+} from "../../src/state/reducedMotion.ts";
+import { useWorldStore } from "../../src/state/useWorldStore.ts";
 import type { TestReporter } from "./harness.ts";
 
 const STRONG = {
@@ -24,13 +29,16 @@ export function runQualitySuite(reporter: TestReporter): void {
 
   check(
     "?quality=high forces high and turns auto off even on a phone",
-    pickInitialQuality({
-      ...STRONG,
-      search: "?quality=high",
-      width: 360,
-      reducedMotion: true,
-      hardwareConcurrency: 2,
-    }).quality === "high",
+    (() => {
+      const decision = pickInitialQuality({
+        ...STRONG,
+        search: "?quality=high",
+        width: 360,
+        reducedMotion: true,
+        hardwareConcurrency: 2,
+      });
+      return decision.quality === "high" && decision.auto === false;
+    })(),
   );
   check(
     "?quality=low forces low and turns auto off on a strong desktop",
@@ -120,5 +128,78 @@ export function runQualitySuite(reporter: TestReporter): void {
       describeQuality("high", false) === "High (forced)" &&
       describeQuality("low", true) === "Low (auto)" &&
       describeQuality("low", false) === "Low (forced)",
+  );
+
+  const initial = useWorldStore.getState();
+  check(
+    "the store starts on low quality with the high latch off",
+    initial.quality === "low" &&
+      initial.qualityAuto === true &&
+      initial.qualityEverHigh === false,
+    `${initial.quality}, auto ${initial.qualityAuto}, latch ${initial.qualityEverHigh}`,
+  );
+
+  useWorldStore.setState({
+    quality: "low",
+    qualityAuto: false,
+    qualityEverHigh: false,
+  });
+  const qualityStore = useWorldStore.getState();
+  qualityStore.setQuality("high", true);
+  const latchedHigh = useWorldStore.getState().qualityEverHigh;
+  useWorldStore.getState().setQuality("low", true);
+  check(
+    "qualityEverHigh stays true after a drop from high to low",
+    latchedHigh && useWorldStore.getState().qualityEverHigh === true,
+  );
+  useWorldStore.setState({
+    quality: "low",
+    qualityAuto: false,
+    qualityEverHigh: false,
+  });
+  useWorldStore.getState().setQuality("low", true);
+  check(
+    "a session forced low from the start never latches high",
+    useWorldStore.getState().qualityEverHigh === false,
+  );
+
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  const query = {
+    matches: true,
+    addEventListener: (
+      type: string,
+      listener: (event: MediaQueryListEvent) => void,
+    ) => {
+      if (type === "change") listeners.add(listener);
+    },
+    removeEventListener: (
+      type: string,
+      listener: (event: MediaQueryListEvent) => void,
+    ) => {
+      if (type === "change") listeners.delete(listener);
+    },
+  };
+  const globalRecord = globalThis as unknown as Record<string, unknown>;
+  const previousWindow = globalRecord.window;
+  globalRecord.window = { matchMedia: () => query };
+  const stopReducedMotion = initReducedMotion();
+  const startedOn = reducedMotion.current;
+  query.matches = false;
+  for (const listener of listeners) {
+    listener({ matches: false } as MediaQueryListEvent);
+  }
+  const followedChange = reducedMotion.current === false;
+  stopReducedMotion();
+  const cleanedUp = listeners.size === 0;
+  if (previousWindow === undefined) {
+    delete globalRecord.window;
+  } else {
+    globalRecord.window = previousWindow;
+  }
+  reducedMotion.current = false;
+  check(
+    "initReducedMotion reads the query, follows changes and cleans up",
+    startedOn && followedChange && cleanedUp,
+    `start ${startedOn}, change ${followedChange}, cleanup ${cleanedUp}`,
   );
 }
