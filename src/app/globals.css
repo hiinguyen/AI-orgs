@@ -72,6 +72,23 @@
     border-radius: 12px;
   }
 
+  /* Full-viewport shell padding, including the notch and home indicator. */
+  .app-safe {
+    padding-top: max(0.5rem, env(safe-area-inset-top));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+  }
+
+  @media (min-width: 768px) {
+    .app-safe {
+      padding-top: max(0.75rem, env(safe-area-inset-top));
+      padding-right: max(0.75rem, env(safe-area-inset-right));
+      padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+      padding-left: max(0.75rem, env(safe-area-inset-left));
+    }
+  }
+
   .eyebrow {
     font-size: 10px;
     font-weight: 600;
@@ -346,6 +363,45 @@
     border: 2px solid #0a0e14;
     background: var(--color-signal);
     box-shadow: 0 0 0 1px rgba(124, 196, 214, 0.45);
+  }
+
+  /* Comfortable touch targets on phones and small tablets, including a phone
+     held in landscape (844 px wide). Inside the components layer so Tailwind
+     utilities still win where a control needs a tighter box; desktop density
+     is unchanged. */
+  @media (max-width: 900px) {
+    .btn,
+    .chip,
+    .segmented-option,
+    .camera-preset {
+      min-height: 40px;
+    }
+
+    .btn,
+    .segmented-option,
+    .camera-preset {
+      min-width: 40px;
+    }
+
+    .chip {
+      padding-top: 0.5rem;
+      padding-bottom: 0.5rem;
+    }
+
+    .range {
+      height: 40px;
+      padding: 16px 0;
+      background-clip: content-box;
+    }
+  }
+
+  /* Fixed overlays sit outside `.app-safe`, so they carry their own notch and
+     home-indicator padding. */
+  .safe-overlay {
+    padding-top: max(1rem, env(safe-area-inset-top));
+    padding-right: max(1rem, env(safe-area-inset-right));
+    padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    padding-left: max(1rem, env(safe-area-inset-left));
   }
 }
 

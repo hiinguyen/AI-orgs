@@ -6,6 +6,7 @@ import * as THREE from "three";
 import type { AgentId, Vec2 } from "@/agents/agentTypes";
 import { AGENT_BY_ID } from "@/agents/AgentRegistry";
 import { liveWorld } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import { agentVisuals, findAgentState } from "./agentVisuals";
 import {
   geometries,
@@ -109,9 +110,12 @@ function writeDestination(
   path: readonly Vec2[],
   phase: number,
   seat: number,
+  calm: boolean,
 ): void {
   const last = path[path.length - 1];
-  const breath = 0.72 + Math.sin(phase * 3.2 + seat * 0.9) * 0.06;
+  const breath = calm
+    ? 0.72
+    : 0.72 + Math.sin(phase * 3.2 + seat * 0.9) * 0.06;
   ring.visible = true;
   ring.position.set(last.x, DESTINATION_Y, last.z);
   ring.rotation.set(-Math.PI / 2, 0, 0);
@@ -160,7 +164,8 @@ export function PathTrail({
       return;
     }
 
-    if (snapshot?.status === "running") {
+    const calm = reducedMotion.current;
+    if (snapshot?.status === "running" && !calm) {
       phase.current =
         (phase.current + delta * (snapshot.speed || 1) * PHASE_SPEED) % SPACING;
     }
@@ -176,7 +181,7 @@ export function PathTrail({
     mesh.count = placed;
     mesh.visible = placed > 0;
     mesh.instanceMatrix.needsUpdate = true;
-    writeDestination(ring, path, phase.current, profile.seat);
+    writeDestination(ring, path, phase.current, profile.seat, calm);
   });
 
   return (

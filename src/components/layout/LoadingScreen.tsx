@@ -59,7 +59,7 @@ export function LoadingScreen() {
       aria-live="polite"
       aria-label="Loading AI Agent World"
       className={cn(
-        "fixed inset-0 z-[80] flex flex-col items-center justify-center bg-ink-950/95 backdrop-blur-sm transition-opacity duration-500",
+        "safe-overlay fixed inset-0 z-[80] flex flex-col items-center justify-center bg-ink-950/95 backdrop-blur-sm transition-opacity duration-500",
         leaving && "pointer-events-none opacity-0",
       )}
     >

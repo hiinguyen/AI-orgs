@@ -20,6 +20,7 @@ import {
   useWorldStore,
   type WorldStore,
 } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import { agentFrozen, agentVisuals, findAgentState } from "./agentVisuals";
 import { labelAnchorFor } from "@/world/labelAnchors";
 import {
@@ -98,6 +99,12 @@ const pulseRingMaterial = sharedMaterial(
 const selectionRingMaterial = hoverRingMaterial(SELECTION_COLOR);
 
 /**
+ * Static ring progress under reduced motion: the success/error cue keeps a
+ * visible ring, but its radius and opacity never change while it is active.
+ */
+const CALM_PULSE_PROGRESS = 0.35;
+
+/**
  * Rig inputs for the animator, precomputed once per agent. Building these in
  * the frame loop allocated one object per agent per frame.
  */
@@ -146,6 +153,7 @@ interface AgentFrameContext {
   width: number;
   height: number;
   running: boolean;
+  calm: boolean;
   store: WorldStore;
   pools: RobotPools;
   rings: RobotRings;
@@ -288,12 +296,15 @@ function writeAgentRings(
   const highlighted =
     store.selectedAgentId === ROBOT_PROFILES[agentIndex].id ||
     store.hovered === ROBOT_HOVER_IDS[agentIndex];
+  const calm = reducedMotion.current;
   writeRings(
     agentIndex,
     ringEnergy(visual.animator, agent?.paused ?? false),
     highlighted,
     visual.pulse < PULSE_DURATION,
-    Math.min(1, visual.pulse / PULSE_DURATION),
+    calm
+      ? CALM_PULSE_PROGRESS
+      : Math.min(1, visual.pulse / PULSE_DURATION),
     visual.pulseTone,
     root,
     rings,
@@ -318,6 +329,7 @@ function writeAgentVisual(
     visual.speed,
     frozen,
     ROBOT_ANIMATOR_INPUTS[agentIndex].legLength,
+    context.calm,
   );
 
   publishVisualPose(profile, visual, rig);
@@ -510,6 +522,7 @@ export function AgentCharacters({ high }: { high: boolean }) {
         width: frame.size.width,
         height: frame.size.height,
         running,
+        calm: reducedMotion.current,
         store: useWorldStore.getState(),
         pools: pools.current,
         rings: rings.current,
@@ -520,6 +533,7 @@ export function AgentCharacters({ high }: { high: boolean }) {
     context.width = frame.size.width;
     context.height = frame.size.height;
     context.running = running;
+    context.calm = reducedMotion.current;
     context.store = useWorldStore.getState();
     context.pools = pools.current;
     context.rings = rings.current;

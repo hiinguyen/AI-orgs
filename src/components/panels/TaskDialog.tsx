@@ -132,7 +132,7 @@ function TaskDialogForm({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 p-4 backdrop-blur-sm"
+      className="safe-overlay fixed inset-0 z-50 flex items-center justify-center bg-ink-950/70 backdrop-blur-sm"
       onMouseDown={(event) => {
         if (event.target === event.currentTarget) closeDialog();
       }}
@@ -143,7 +143,7 @@ function TaskDialogForm({
         aria-modal="true"
         aria-labelledby="task-dialog-title"
         aria-describedby="task-dialog-note"
-        className="surface scroll-thin max-h-[calc(100dvh-2rem)] w-full max-w-[460px] overflow-y-auto rounded-2xl"
+        className="surface scroll-thin max-h-full w-full max-w-[460px] overflow-y-auto rounded-2xl"
       >
         <form onSubmit={handleSubmit}>
           <header className="flex items-start justify-between gap-3 px-5 pt-4">

@@ -7,6 +7,7 @@ import type { AgentId, AgentState } from "@/agents/agentTypes";
 import { AGENT_BY_ID } from "@/agents/AgentRegistry";
 import { STATIONS, type StationId } from "@/simulation/worldLayout";
 import { liveWorld } from "@/state/useWorldStore";
+import { reducedMotion } from "@/state/reducedMotion";
 import {
   geometries,
   materials,
@@ -281,8 +282,9 @@ function useScreenGlow(
     if (screens === null) return;
     const snapshot = liveWorld.current;
     const running = snapshot?.status === "running";
+    const calm = reducedMotion.current;
     const texture = screenTexture();
-    if (running) {
+    if (running && !calm) {
       texture.offset.y = (texture.offset.y + delta * 0.035) % 1;
     }
 
@@ -293,19 +295,24 @@ function useScreenGlow(
       const agent = snapshot
         ? findAgentState(snapshot.agents, entry.ownerId)
         : undefined;
-      entry.material.emissiveIntensity = THREE.MathUtils.damp(
-        entry.material.emissiveIntensity,
-        screenGlowTarget(agent),
-        SCREEN_GLOW_LAMBDA,
-        delta,
-      );
+      const glowTarget = screenGlowTarget(agent);
+      entry.material.emissiveIntensity = calm
+        ? glowTarget
+        : THREE.MathUtils.damp(
+            entry.material.emissiveIntensity,
+            glowTarget,
+            SCREEN_GLOW_LAMBDA,
+            delta,
+          );
       const target = screenPoolTarget(agent);
-      const next = THREE.MathUtils.damp(
-        entry.poolLevel,
-        target,
-        SCREEN_GLOW_LAMBDA,
-        delta,
-      );
+      const next = calm
+        ? target
+        : THREE.MathUtils.damp(
+            entry.poolLevel,
+            target,
+            SCREEN_GLOW_LAMBDA,
+            delta,
+          );
       if (Math.abs(next - entry.poolLevel) <= POOL_EPSILON) continue;
       entry.poolLevel = next;
       if (poolMesh) {

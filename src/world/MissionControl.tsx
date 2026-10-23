@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import { MISSION_CONTROL } from "@/simulation/worldLayout";
 import type { WorldSnapshot } from "@/integrations/AgentBackend";
@@ -8,7 +8,7 @@ import { liveWorld, useWorldStore } from "@/state/useWorldStore";
 import { geometries, materials } from "./sharedResources";
 import { missionControlSurface } from "./proceduralTextures";
 import { missionSignature, missionView } from "./missionContent";
-import { drawMissionControl } from "./missionDrawing";
+import { drawMissionControl, resolveMissionFont } from "./missionDrawing";
 
 /**
  * Wall screen with live task content. The canvas is repainted at most four
@@ -24,6 +24,24 @@ export function MissionControl() {
   const lastSignature = useRef<string | null>(null);
   const lastSnapshot = useRef<WorldSnapshot | null | undefined>(undefined);
   const lastSimulated = useRef<boolean | null>(null);
+
+  // Resolve the real UI font once, then repaint after web fonts finish so the
+  // wall never keeps a system-font fallback for the life of the tab.
+  useEffect(() => {
+    let cancelled = false;
+    resolveMissionFont();
+    const repaint = () => {
+      if (cancelled) return;
+      resolveMissionFont();
+      lastSnapshot.current = undefined;
+      lastSignature.current = null;
+      elapsed.current = REDRAW_INTERVAL_SECONDS;
+    };
+    void document.fonts.ready.then(repaint);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useFrame((_, delta) => {
     elapsed.current += delta;

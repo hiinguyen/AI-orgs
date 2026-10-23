@@ -74,120 +74,126 @@ export function SimulationControls() {
 
   return (
     <div className="flex flex-wrap items-center gap-0.5 sm:gap-1">
-      <button
-        type="button"
-        className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
-        onClick={handleRunToggle}
-        aria-label={`${runLabel} simulation`}
-      >
-        <RunIcon aria-hidden="true" />
-        <span className="hidden xl:inline">{runLabel}</span>
-      </button>
-
-      <SegmentedControl
-        options={speedOptions}
-        value={String(speed)}
-        onChange={(value) => {
-          void commands.setSpeed(Number(value));
-        }}
-        ariaLabel="Simulation speed"
-      />
-
-      <button
-        type="button"
-        className={cn(
-          "btn btn-quiet h-8 w-8 px-0",
-          !soundEnabled && "text-warn",
-        )}
-        onClick={() => setSound({ enabled: !soundEnabled })}
-        aria-pressed={!soundEnabled}
-        aria-label={soundEnabled ? "Mute sound" : "Unmute sound"}
-        title="Mute (M)"
-      >
-        {soundEnabled ? (
-          <Volume2 aria-hidden="true" />
-        ) : (
-          <VolumeX aria-hidden="true" />
-        )}
-      </button>
-
-      {confirmReset ? (
-        <div
-          role="group"
-          aria-label="Confirm reset"
-          className="flex items-center gap-0.5 rounded-lg border border-warn/30 bg-warn/[0.08] px-1.5"
-        >
-          <button
-            type="button"
-            autoFocus
-            className="btn btn-quiet h-7 px-1.5 text-[10.5px] text-warn"
-            onClick={() => {
-              void handleConfirmReset();
-            }}
-          >
-            Confirm reset
-          </button>
-          <button
-            type="button"
-            className="btn btn-quiet h-7 px-1.5 text-[10.5px]"
-            onClick={cancelReset}
-          >
-            Cancel
-          </button>
-        </div>
-      ) : (
+      <div className="flex flex-wrap items-center gap-0.5 sm:gap-1">
         <button
-          ref={resetButtonRef}
           type="button"
           className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
-          onClick={() => setConfirmReset(true)}
-          aria-label="Reset simulation"
+          onClick={handleRunToggle}
+          aria-label={`${runLabel} simulation`}
         >
-          <RotateCcw aria-hidden="true" />
-          <span className="hidden xl:inline">Reset</span>
+          <RunIcon aria-hidden="true" />
+          <span className="hidden xl:inline">{runLabel}</span>
         </button>
-      )}
+
+        <SegmentedControl
+          options={speedOptions}
+          value={String(speed)}
+          onChange={(value) => {
+            void commands.setSpeed(Number(value));
+          }}
+          ariaLabel="Simulation speed"
+        />
+
+        <button
+          type="button"
+          className={cn(
+            "btn btn-quiet h-8 w-8 px-0",
+            !soundEnabled && "text-warn",
+          )}
+          onClick={() => setSound({ enabled: !soundEnabled })}
+          aria-pressed={!soundEnabled}
+          aria-label={soundEnabled ? "Mute sound" : "Unmute sound"}
+          title="Mute (M)"
+        >
+          {soundEnabled ? (
+            <Volume2 aria-hidden="true" />
+          ) : (
+            <VolumeX aria-hidden="true" />
+          )}
+        </button>
+
+        {confirmReset ? (
+          <div
+            role="group"
+            aria-label="Confirm reset"
+            className="flex items-center gap-0.5 rounded-lg border border-warn/30 bg-warn/[0.08] px-1.5"
+          >
+            <button
+              type="button"
+              autoFocus
+              className="btn btn-quiet h-7 px-1.5 text-[10.5px] text-warn"
+              onClick={() => {
+                void handleConfirmReset();
+              }}
+            >
+              Confirm reset
+            </button>
+            <button
+              type="button"
+              className="btn btn-quiet h-7 px-1.5 text-[10.5px]"
+              onClick={cancelReset}
+            >
+              Cancel
+            </button>
+          </div>
+        ) : (
+          <button
+            ref={resetButtonRef}
+            type="button"
+            className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
+            onClick={() => setConfirmReset(true)}
+            aria-label="Reset simulation"
+          >
+            <RotateCcw aria-hidden="true" />
+            <span className="hidden xl:inline">Reset</span>
+          </button>
+        )}
+      </div>
 
       <span
         aria-hidden="true"
         className="mx-0.5 hidden h-5 w-px bg-white/[0.08] sm:block"
       />
 
-      <button
-        type="button"
-        className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
-        onClick={() => {
-          void commands.runDemo();
-        }}
-        aria-label="Run demo"
-        title="Run demo"
-      >
-        <Sparkles aria-hidden="true" />
-        <span className="hidden xl:inline">Run demo</span>
-      </button>
+      {/* On phones the actions wrap as one deliberate row instead of leaving
+          the primary button alone on a line of its own. */}
+      <div className="flex items-center gap-0.5 max-sm:w-full max-sm:justify-between sm:gap-1">
+        <button
+          type="button"
+          className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
+          onClick={() => {
+            void commands.runDemo();
+          }}
+          aria-label="Run demo"
+          title="Run demo"
+        >
+          <Sparkles aria-hidden="true" />
+          <span className="hidden xl:inline">Run demo</span>
+        </button>
 
-      <button
-        type="button"
-        className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
-        onClick={() => {
-          void commands.loadSprint();
-        }}
-        aria-label="Load sprint"
-        title="Load sprint"
-      >
-        <Layers aria-hidden="true" />
-        <span className="hidden xl:inline">Load sprint</span>
-      </button>
+        <button
+          type="button"
+          className="btn btn-ghost w-8 px-0 xl:w-auto xl:px-2.5"
+          onClick={() => {
+            void commands.loadSprint();
+          }}
+          aria-label="Load sprint"
+          title="Load sprint"
+        >
+          <Layers aria-hidden="true" />
+          <span className="hidden xl:inline">Load sprint</span>
+        </button>
 
-      <button
-        type="button"
-        className="btn btn-primary w-8 px-0 sm:w-auto sm:px-2.5"
-        onClick={() => openTaskDialog()}
-        aria-label="New task"
-      >
-        <Plus aria-hidden="true" />
-        <span className="hidden sm:inline">New task</span>
-      </button>
+        <button
+          type="button"
+          className="btn btn-primary w-8 px-0 sm:w-auto sm:px-2.5"
+          onClick={() => openTaskDialog()}
+          aria-label="New task"
+        >
+          <Plus aria-hidden="true" />
+          <span className="hidden sm:inline">New task</span>
+        </button>
+      </div>
     </div>
   );
 }
