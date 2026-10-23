@@ -6,6 +6,7 @@ import { Shuffle, Sparkles, X } from "lucide-react";
 import type { AgentId } from "@/agents/agentTypes";
 import { getAgentProfile } from "@/agents/AgentRegistry";
 import { commands } from "@/integrations/backendClient";
+import { isCapabilityEnabled } from "@/integrations/AgentBackend";
 import { useWorldStore } from "@/state/useWorldStore";
 import { DEMO_TASK } from "@/tasks/taskActions";
 import {
@@ -305,7 +306,10 @@ function TaskDialogForm({
 export function TaskDialog() {
   const open = useWorldStore((state) => state.taskDialogOpen);
   const preferredAgentId = useWorldStore((state) => state.preferredAgentId);
+  const canSubmit = useWorldStore((state) =>
+    isCapabilityEnabled(state.backend.capabilities, "submitTask"),
+  );
 
-  if (!open) return null;
+  if (!open || !canSubmit) return null;
   return <TaskDialogForm preferredAgentId={preferredAgentId} />;
 }

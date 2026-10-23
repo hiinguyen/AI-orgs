@@ -1,0 +1,7 @@
+{
+  "session_id": "fixture-session",
+  "transcript_path": "/home/user/.claude/projects/example/fixture-session.jsonl",
+  "cwd": "/home/user/project",
+  "hook_event_name": "SessionEnd",
+  "reason": "exit"
+}

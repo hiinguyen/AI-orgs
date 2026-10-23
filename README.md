@@ -19,6 +19,7 @@ A living 3D office in the browser where six AI agents - an Orchestrator, a Produ
 - [Architecture](#architecture)
 - [Demo, backlog and sprint content](#demo-backlog-and-sprint-content)
 - [Connecting a real backend](#connecting-a-real-backend)
+- [Connecting Claude Code](#connecting-claude-code)
 - [Testing](#testing)
 - [Engineering notes: why the code looks like this](#engineering-notes-why-the-code-looks-like-this)
 - [More docs](#more-docs)
@@ -109,9 +110,11 @@ The orbit camera is clamped so you can never leave the office (target locked to 
 npm run dev        # Next dev server on :3000
 npm run build      # production build
 npm run start      # serve the production build
-npm run typecheck  # tsc --noEmit (strict)
-npm run lint       # eslint over src/
-npm run test       # headless simulation suite (see Testing)
+npm run typecheck    # tsc --noEmit (strict)
+npm run lint         # eslint over src/
+npm run test         # headless simulation suite (see Testing)
+npm run bridge       # Claude Code hooks bridge on 127.0.0.1:8791
+npm run bridge:replay # scripted hook session, no Claude Code needed
 ```
 
 CI runs `npm ci` plus typecheck, lint, the headless simulation tests and a production build on Node 22 and 24 on every push and pull request. A phase counts as done only when the checks pass locally.
@@ -223,6 +226,41 @@ Server -> client:
 ```
 
 Snapshots arrive on connect and on change; `links` are communication arcs the 3D layer draws between agents. The full event vocabulary (28 event types), the snapshot shape and the agent/task models are defined in `src/events/eventTypes.ts`, `src/integrations/AgentBackend.ts` and `src/tasks/taskTypes.ts` - implement them and the entire visualisation, UI and sound layer works without a single change on the 3D side. The settings panel shows which backend is connected, and the top bar switches from "Simulation mode - no live inference" to "Live backend".
+
+## Connecting Claude Code
+
+The bridge lets a real Claude Code run drive the 3D world. Claude Code hooks POST their JSON to a local server, which maps the main conversation to Orion and every subagent instance to its own live robot: tool calls become activity, `SubagentStart` spawns a robot and `SubagentStop` sends it home.
+
+1. Start the bridge in one terminal:
+
+   ```bash
+   npm run bridge
+   ```
+
+   It listens on `http://127.0.0.1:8791`; set `BRIDGE_PORT` to change the port. `npm run bridge -- --capture` additionally prints each hook's event name and the field names with their value types. It never prints values, prompts, commands, tool responses or transcript paths.
+
+2. Start the app against it:
+
+   ```bash
+   NEXT_PUBLIC_AGENT_BACKEND=websocket \
+   NEXT_PUBLIC_AGENT_WS_URL=ws://127.0.0.1:8791/ws \
+   npm run dev
+   ```
+
+   The top bar reads "Live backend". Simulation mode is unchanged when those variables are absent.
+
+3. Install the hooks. `bridge/hooks.example.json` contains the `hooks` block for `SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `SubagentStart`, `SubagentStop` and `Stop`. Replace `/absolute/path/to/ai-agent-world` with the real checkout path, then merge the block into one of:
+
+   - `~/.claude/settings.json` for every project
+   - `.claude/settings.json` or `.claude/settings.local.json` for one project
+
+   Every hook uses `"async": true` with a 5 second timeout and calls `node bridge/hook-forward.mjs`. The forwarder reads stdin, POSTs to the bridge with a 1 second timeout, prints nothing and always exits 0, so a stopped bridge never slows a Claude Code session. If you change `BRIDGE_PORT`, set the same value in the environment that runs Claude Code.
+
+4. Optional: watch without Claude Code. `npm run bridge:replay` posts a scripted session with four parallel `code-reviewer` subagents, a `tdd-guide`, tool calls, a failure and two agents that stay running.
+
+The bridge is read-only by design. Run demo, Load sprint, New task, the speed control and the per-agent Pause button are hidden because the bridge cannot submit tasks, pause agents or change speed; the commands still answer with a friendly "not supported". Tasks and Mission Control stay empty. Several Claude Code sessions feed one merged world with one Orion. There is no event for a cancelled or crashed subagent, so an agent with no hook for 10 minutes despawns as an error with "Lost contact". Nested and background subagent hook behavior is not confirmed.
+
+The bridge never stores or forwards prompts, tool responses, transcript paths or full assistant messages. Activity text is limited to the tool name, a file path relative to the hook `cwd`, the first 60 characters of a masked Bash command, an `Agent`/`Task` description, or a 120 character truncated summary. `redact()` masks `Authorization`/`Bearer` values, `token`, `password` and `api_key` assignments, `sk-` keys, GitHub tokens and AWS access key shapes. Hook requests with an `Origin` header, a non-JSON content type, a body over 256 KiB or malformed fields are rejected; the server binds loopback only and caps hook calls at 200 per second.
 
 ## Testing
 

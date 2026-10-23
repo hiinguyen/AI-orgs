@@ -5,6 +5,7 @@ import { DEMO_TASK } from "@/tasks/taskActions";
 import { SPRINT_TASKS } from "@/tasks/taskBacklog";
 import type { CreateTaskInput, Task } from "@/tasks/taskTypes";
 import type { AgentBackend } from "./AgentBackend.ts";
+import { DEFAULT_BACKEND_CAPABILITIES } from "./AgentBackend.ts";
 import { MockAgentBackend } from "./MockAgentBackend.ts";
 import { WebSocketAgentBackend } from "./WebSocketAgentBackend.ts";
 
@@ -90,6 +91,12 @@ export function connectBackend(): () => void {
         });
       },
     );
+    const unsubscribeCapabilities = activeBackend.subscribeCapabilities?.(
+      (capabilities) => {
+        if (connection?.token !== token) return;
+        useWorldStore.getState().setBackend({ capabilities });
+      },
+    );
     connection = {
       backend: activeBackend,
       token,
@@ -98,6 +105,7 @@ export function connectBackend(): () => void {
         unsubscribeEvent();
         unsubscribeSnapshot();
         unsubscribeConnection?.();
+        unsubscribeCapabilities?.();
       },
     };
   }
@@ -105,6 +113,13 @@ export function connectBackend(): () => void {
   const active = connection;
   active.refs += 1;
   const token = active.token;
+
+  // A backend that never announces capabilities keeps the phase 2 behavior.
+  useWorldStore.getState().setBackend({
+    capabilities: activeBackend.getCapabilities?.() ?? {
+      ...DEFAULT_BACKEND_CAPABILITIES,
+    },
+  });
 
   const existing = activeBackend.getSnapshot();
   if (existing !== null) {

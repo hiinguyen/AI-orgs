@@ -39,7 +39,12 @@ import type {
   WorkflowSignal,
 } from "../tasks/taskTypes.ts";
 import { PHASE_LABELS, PRIORITY_LABELS, STATUS_LABELS } from "../tasks/taskTypes.ts";
-import type { CommLink, SimulationStatus, WorldSnapshot } from "./AgentBackend.ts";
+import type {
+  BackendCapabilities,
+  CommLink,
+  SimulationStatus,
+  WorldSnapshot,
+} from "./AgentBackend.ts";
 
 /** A message larger than this is dropped before `JSON.parse` runs. */
 export const MAX_MESSAGE_BYTES = 1024 * 1024;
@@ -138,6 +143,20 @@ function readBoolean(
 ): boolean | null {
   const value = record[key];
   return typeof value === "boolean" ? value : null;
+}
+
+/** Parse the additive capability announcement. Every flag must be present. */
+export function parseBackendCapabilities(
+  value: unknown,
+): BackendCapabilities | null {
+  if (!isRecord(value)) return null;
+  const submitTask = readBoolean(value, "submitTask");
+  const pauseAgent = readBoolean(value, "pauseAgent");
+  const setSpeed = readBoolean(value, "setSpeed");
+  if (submitTask === null || pauseAgent === null || setSpeed === null) {
+    return null;
+  }
+  return { submitTask, pauseAgent, setSpeed };
 }
 
 function clamp01(value: number): number {
@@ -670,6 +689,7 @@ export function parseAgentEvent(value: unknown): AgentEvent | null {
 
 /** A fully validated server frame, or a reason why it was dropped. */
 export type ServerMessage =
+  | { kind: "hello"; capabilities: BackendCapabilities }
   | { kind: "snapshot"; snapshot: WorldSnapshot }
   | { kind: "event"; event: AgentEvent }
   | { kind: "ack"; id: string; ok: boolean; result: unknown; error: string | null }
@@ -711,6 +731,12 @@ export function parseServerMessage(raw: unknown): ServerMessage {
   }
 
   switch (message.type) {
+    case "hello": {
+      const capabilities = parseBackendCapabilities(message.capabilities);
+      return capabilities === null
+        ? invalid("ignoring a malformed capability announcement")
+        : { kind: "hello", capabilities };
+    }
     case "snapshot": {
       const snapshot = parseWorldSnapshot(message.snapshot);
       return snapshot === null

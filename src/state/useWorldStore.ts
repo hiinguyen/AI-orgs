@@ -6,9 +6,11 @@ import type { LocationId } from "../simulation/worldLayout.ts";
 import { BAY_COUNT } from "../simulation/worldLayout.ts";
 import { SIMULATION_CONFIG } from "../simulation/simulationConfig.ts";
 import type {
+  BackendCapabilities,
   SimulationStatus,
   WorldSnapshot,
 } from "../integrations/AgentBackend.ts";
+import { DEFAULT_BACKEND_CAPABILITIES } from "../integrations/AgentBackend.ts";
 import type { AgentEvent } from "../events/eventTypes.ts";
 import { appendEvent } from "../events/eventStore.ts";
 import { DEFAULT_SOUND_SETTINGS } from "../audio/soundCues.ts";
@@ -61,6 +63,7 @@ export interface BackendInfo {
   simulated: boolean;
   connected: boolean;
   error: string | null;
+  capabilities: BackendCapabilities;
 }
 
 export interface OverlaySettings {
@@ -248,6 +251,7 @@ export const useWorldStore = create<WorldStore>()((set) => {
       simulated: true,
       connected: false,
       error: null,
+      capabilities: { ...DEFAULT_BACKEND_CAPABILITIES },
     },
     sound: { ...DEFAULT_SOUND_SETTINGS },
 

@@ -7,21 +7,17 @@
  *   NEXT_PUBLIC_AGENT_WS_URL=ws://127.0.0.1:8790
  *
  * It has no dependencies (the repo installs no `ws` package): the handshake
- * and the text frames are implemented directly on node:net. It also exports
- * `startFakeLiveServer` so the headless checks can drive a real WebSocket
- * round trip without a browser. The scenario data (profiles, states, events,
- * snapshots) lives in scripts/lib/fakeLiveScenario.ts.
+ * and the text frames are implemented directly on node:net. It is a scenario
+ * driver on top of the shared stage in src/simulation/liveStage.ts; that stage
+ * is also what the Claude Code bridge drives. It also exports
+ * `startFakeLiveServer` so the headless checks can drive a real WebSocket round
+ * trip without a browser.
  */
 import { createServer, type IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { pathToFileURL } from "node:url";
-import type { AgentEvent } from "../src/events/eventTypes.ts";
-import type {
-  CommLink,
-  SimulationStatus,
-} from "../src/integrations/AgentBackend.ts";
-import { allocateBay, bayStand, routeToBay } from "../src/simulation/bays.ts";
-import { headingFor, route, slotFor } from "../src/simulation/worldLayout.ts";
+import type { SimulationStatus } from "../src/integrations/AgentBackend.ts";
+import { LiveStage } from "../src/simulation/liveStage.ts";
 import {
   CLOSE_NORMAL,
   OPCODE_CLOSE,
@@ -31,36 +27,9 @@ import {
   encodeText,
   readFrames,
   webSocketAccept,
-} from "./lib/miniWebSocket.ts";
-import {
-  advance,
-  buildAgentEvent,
-  buildWorldSnapshot,
-  createLiveAgent,
-  liveProfileFor,
-  taskFixture,
-  type AgentEventExtra,
-  type LiveAgent,
-} from "./lib/fakeLiveScenario.ts";
-
-const ALLOWED_ORIGIN_HOSTS: ReadonlySet<string> = new Set([
-  "localhost",
-  "127.0.0.1",
-]);
-
-/**
- * Browsers always send Origin on a WebSocket handshake. Clients that send no
- * Origin (CLI tools, tests) are allowed. A browser page is allowed only when
- * it is served from localhost or 127.0.0.1, on any port.
- */
-function isAllowedOrigin(origin: string | undefined): boolean {
-  if (origin === undefined) return true;
-  try {
-    return ALLOWED_ORIGIN_HOSTS.has(new URL(origin).hostname);
-  } catch {
-    return false;
-  }
-}
+} from "../bridge/lib/miniWebSocket.ts";
+import { isAllowedOrigin } from "../bridge/lib/origin.ts";
+import { liveProfileFor, taskFixture } from "./lib/fakeLiveScenario.ts";
 
 export interface FakeLiveServerOptions {
   /** 0 picks a free port; the resolved port is returned. */
@@ -104,20 +73,22 @@ export async function startFakeLiveServer(
   const emoteSeconds = options.emoteSeconds ?? 1.2;
   const fadeSeconds = options.fadeSeconds ?? 0.1;
   const walkSpeed = options.walkSpeed ?? 2.4;
-  /** The client scales a new robot in over 0.4 s at the hub. */
-  const spawnHoldSeconds = 0.4;
 
-  let clock = 0;
-  let status: SimulationStatus = "running";
-  let speed = 1;
   let spawnCountdown = 0;
   let spawnSeq = 0;
-  let eventSeq = 0;
-  let linkSeq = 0;
-  let paused = false;
 
-  const live: LiveAgent[] = [];
-  const links: CommLink[] = [];
+  const stage = new LiveStage({
+    maxAgents,
+    walkSpeed,
+    spawnHoldSeconds: 0.4,
+    emoteSeconds,
+    fadeSeconds,
+    now: Date.now,
+    eventIdPrefix: "live",
+  });
+  stage.setStatus("running");
+  stage.setSpeed(1);
+
   const clients = new Set<Client>();
 
   const broadcast = (value: unknown): void => {
@@ -133,252 +104,42 @@ export async function startFakeLiveServer(
     }
   };
 
-  const emit = (
-    type: AgentEvent["type"],
-    message: string,
-    extra: AgentEventExtra = {},
-  ): void => {
-    eventSeq += 1;
-    broadcast({
-      type: "event",
-      event: buildAgentEvent(eventSeq, clock, type, message, extra),
-    });
+  const broadcastSnapshot = (): void => {
+    broadcast({ type: "snapshot", snapshot: stage.snapshot() });
   };
 
-  const occupiedBays = (): Set<number> => {
-    const occupied = new Set<number>();
-    for (const agent of live) {
-      if (agent.bay !== null && agent.phase !== "fade") occupied.add(agent.bay);
+  /** Broadcast queued stage events, then the current snapshot. */
+  const flush = (): void => {
+    for (const event of stage.drainEvents()) {
+      broadcast({ type: "event", event });
     }
-    return occupied;
-  };
-
-  const waitingAgents = (): LiveAgent[] =>
-    live.filter((agent) => agent.waiting && agent.phase !== "fade");
-
-  const placeWaiting = (): void => {
-    let index = 0;
-    for (const agent of live) {
-      if (!agent.waiting || agent.phase !== "walk-to-bay") continue;
-      const slot = slotFor("lounge", index);
-      agent.state.position.x = slot.x;
-      agent.state.position.z = slot.z;
-      agent.state.location = "lounge";
-      agent.state.destination = null;
-      agent.state.path = [];
-      agent.state.heading = headingFor("lounge", index);
-      index += 1;
-    }
-  };
-
-  const beginWalkToBay = (agent: LiveAgent, bay: number): void => {
-    agent.bay = bay;
-    agent.waiting = false;
-    agent.phase = "walk-to-bay";
-    const stand = bayStand(bay);
-    agent.path = routeToBay(agent.state.position, bay);
-    agent.target = stand;
-    agent.state.destination = "dispatch";
-    agent.state.location = null;
-    agent.state.status = "walking";
-    agent.state.activity = `Walking to dispatch bay ${bay + 1}`;
-    agent.state.path = agent.path.map((point) => ({ ...point }));
-    agent.timer = 0;
-  };
-
-  const promoteWaiting = (): void => {
-    const occupied = occupiedBays();
-    const waiting = waitingAgents();
-    for (const agent of waiting) {
-      const bay = allocateBay(occupied);
-      if (bay === null) break;
-      occupied.add(bay);
-      beginWalkToBay(agent, bay);
-      agent.state.activity = `Claimed dispatch bay ${bay + 1}`;
-    }
-    placeWaiting();
+    broadcastSnapshot();
   };
 
   const spawnAgent = (): void => {
-    if (live.filter((agent) => agent.phase !== "fade").length >= maxAgents) {
-      return;
-    }
+    if (stage.liveAgents.length >= maxAgents) return;
     spawnSeq += 1;
     const profile = liveProfileFor(spawnSeq);
-    const agent = createLiveAgent(profile, clock);
-
-    const bay = allocateBay(occupiedBays());
-    if (bay === null) {
-      agent.waiting = true;
-      agent.phase = "walk-to-bay";
-      agent.state.activity = "Waiting for a dispatch bay";
-      live.push(agent);
-      placeWaiting();
-    } else {
-      live.push(agent);
-      beginWalkToBay(agent, bay);
-      // Hold at the hub while the client plays its 0.4 s scale-in.
-      agent.timer = spawnHoldSeconds;
-      agent.state.status = "idle";
-      agent.state.activity = "Booting at the Operations Hub";
-      agent.state.location = "hub";
-      agent.state.destination = null;
-      agent.state.path = [];
-    }
-
-    emit("agent.spawned", `${profile.name} joined the Dispatch Floor`, {
-      agentId: profile.id,
-      severity: "info",
-      feed: true,
-      metadata: {
-        role: profile.role,
-        bay: agent.bay,
-        waiting: agent.waiting,
-        name: profile.name,
-      },
+    stage.spawn(profile, {
+      workSeconds,
+      outcome: spawnSeq % 5 === 0 ? "error" : "success",
     });
   };
 
-  const startWork = (agent: LiveAgent): void => {
-    agent.phase = "work";
-    agent.timer = workSeconds;
-    agent.state.status = "working";
-    agent.state.location = "dispatch";
-    agent.state.destination = null;
-    agent.state.path = [];
-    agent.state.heading = headingFor("dispatch", agent.bay ?? 0);
-    agent.state.progress = 0;
-    agent.state.activity = `${agent.profile.name} is working on a live task`;
-    agent.linkAt = 0;
-  };
-
-  const beginEmote = (agent: LiveAgent): void => {
-    agent.phase = "emote";
-    agent.timer = emoteSeconds;
-    agent.outcome = spawnSeq % 5 === 0 ? "error" : "success";
-    agent.state.status = agent.outcome;
-    agent.state.progress = 1;
-    agent.state.activity =
-      agent.outcome === "error"
-        ? `${agent.profile.name} hit a problem`
-        : `${agent.profile.name} looks pleased`;
-  };
-
-  const beginWalkHome = (agent: LiveAgent): void => {
-    agent.phase = "walk-home";
-    agent.timer = 0;
-    if (agent.bay !== null) {
-      agent.bay = null;
-      // A freed bay is immediately offered to the queue.
-      promoteWaiting();
-    }
-    const hub = slotFor("hub", 0);
-    agent.path = route(agent.state.position, hub);
-    agent.target = hub;
-    agent.state.destination = "hub";
-    agent.state.location = null;
-    agent.state.status = "walking";
-    agent.state.progress = 0;
-    agent.state.activity = "Heading back to the Operations Hub";
-    agent.state.path = agent.path.map((point) => ({ ...point }));
-  };
-
-  const finishAgent = (agent: LiveAgent): void => {
-    // The client keeps the robot for its 0.4 s fade; removing it here after
-    // that window would be a second, invisible step, so mark it fading and
-    // drop it at the end of the timer.
-    agent.phase = "fade";
-    agent.timer = fadeSeconds;
-    agent.state.status = agent.outcome;
-    agent.state.activity =
-      agent.outcome === "error" ? "Shutting down after an error" : "Shutting down";
-    const duration = Math.max(0, clock - agent.spawnedAt);
-    emit("agent.despawned", `${agent.profile.name} left the floor`, {
-      agentId: agent.id,
-      severity: agent.outcome === "error" ? "error" : "success",
-      feed: true,
-      metadata: { outcome: agent.outcome, duration },
-    });
-  };
-
-  const tickAgent = (agent: LiveAgent, dt: number): boolean => {
-    switch (agent.phase) {
-      case "walk-to-bay": {
-        if (agent.waiting) return false;
-        if (agent.timer > 0) {
-          agent.timer -= dt;
-          return false;
-        }
-        const step = advance(agent.state.position, agent.path, dt * walkSpeed);
-        if (step.heading !== null) agent.state.heading = step.heading;
-        agent.state.path = agent.path.map((point) => ({ ...point }));
-        if (agent.path.length === 0) startWork(agent);
-        return false;
-      }
-      case "work": {
-        agent.timer -= dt;
-        agent.state.progress = Math.max(
-          0,
-          Math.min(1, 1 - agent.timer / Math.max(0.001, workSeconds)),
-        );
-        // One message arc early in the work phase, so live comm links show.
-        if (agent.linkAt === 0 && agent.state.progress > 0.15) {
-          agent.linkAt = clock;
-          linkSeq += 1;
-          links.push({
-            id: `live-link-${linkSeq}`,
-            from: agent.id,
-            to: "orion",
-            kind: "message",
-            startedAt: Math.round(clock * 1000) / 1000,
-            endsAt: Math.round((clock + 2.4) * 1000) / 1000,
-          });
-          emit("agent.message", `${agent.profile.name} reported to Orion`, {
-            agentId: agent.id,
-            targetAgentId: "orion",
-            severity: "info",
-            feed: true,
-          });
-        }
-        if (agent.timer <= 0) beginEmote(agent);
-        return false;
-      }
-      case "emote": {
-        agent.timer -= dt;
-        if (agent.timer <= 0) beginWalkHome(agent);
-        return false;
-      }
-      case "walk-home": {
-        const step = advance(agent.state.position, agent.path, dt * walkSpeed);
-        if (step.heading !== null) agent.state.heading = step.heading;
-        agent.state.path = agent.path.map((point) => ({ ...point }));
-        if (agent.path.length === 0) finishAgent(agent);
-        return false;
-      }
-      case "fade": {
-        agent.timer -= dt;
-        return agent.timer <= 0;
-      }
-    }
-  };
-
-  const snapshot = () =>
-    buildWorldSnapshot({ clock, status, speed, paused, live, links });
-
-  const broadcastSnapshot = (): void => {
-    broadcast({ type: "snapshot", snapshot: snapshot() });
-  };
-
+  let lastTick = Date.now();
   const tick = (): void => {
     const now = Date.now();
     if (clients.size === 0) {
+      stage.drainEvents();
       lastTick = now;
       return;
     }
     const dt = Math.min(0.2, Math.max(0, (now - lastTick) / 1000));
     lastTick = now;
-    if (status !== "running") return;
-    clock += dt * speed;
+    if (stage.simulationStatus !== "running") {
+      stage.drainEvents();
+      return;
+    }
 
     spawnCountdown -= dt * 1000;
     if (spawnCountdown <= 0) {
@@ -390,28 +151,10 @@ export async function startFakeLiveServer(
       }
     }
 
-    let changed = false;
-    for (const agent of live) {
-      const remove = tickAgent(agent, dt);
-      if (remove) changed = true;
-    }
-    if (changed) {
-      for (let index = live.length - 1; index >= 0; index -= 1) {
-        if (live[index].phase === "fade" && live[index].timer <= 0) {
-          live.splice(index, 1);
-        }
-      }
-      promoteWaiting();
-    }
-    links.splice(
-      0,
-      links.length,
-      ...links.filter((link) => link.endsAt > clock),
-    );
-    broadcastSnapshot();
+    stage.tick(dt);
+    flush();
   };
 
-  let lastTick = Date.now();
   const timer = setInterval(tick, tickMs);
 
   const server = createServer((_request, response) => {
@@ -440,6 +183,8 @@ export async function startFakeLiveServer(
     );
     const client: Client = { socket, buffer: Buffer.alloc(0) };
     clients.add(client);
+    // Events from before the first client are history, not a live feed.
+    stage.drainEvents();
     broadcastSnapshot();
 
     const closeClient = (closeCode: number): void => {
@@ -449,7 +194,6 @@ export async function startFakeLiveServer(
     };
 
     socket.on("data", (chunk: Buffer) => {
-      // Once a client is closed, bytes that still arrive are ignored.
       if (!clients.has(client)) return;
       client.buffer = Buffer.concat([client.buffer, chunk]);
       const { frames, rest, protocolError } = readFrames(client.buffer);
@@ -495,6 +239,10 @@ export async function startFakeLiveServer(
     });
   };
 
+  const setStatus = (status: SimulationStatus): void => {
+    stage.setStatus(status);
+  };
+
   const handleCommand = (raw: string, client: Client): void => {
     let message: unknown;
     try {
@@ -521,42 +269,38 @@ export async function startFakeLiveServer(
     }
     switch (command.name) {
       case "start":
-        status = "running";
-        emit("system.started", "Fake live backend started", { feed: true });
-        broadcastSnapshot();
+        setStatus("running");
+        stage.emit("system.started", "Fake live backend started", { feed: true });
+        flush();
         sendAck(client, id, true);
         return;
       case "pause":
-        status = "paused";
-        emit("system.paused", "Fake live backend paused", {
+        setStatus("paused");
+        stage.emit("system.paused", "Fake live backend paused", {
           severity: "warning",
         });
-        broadcastSnapshot();
+        flush();
         sendAck(client, id, true);
         return;
       case "resume":
-        status = "running";
+        setStatus("running");
         lastTick = Date.now();
-        emit("system.resumed", "Fake live backend resumed");
-        broadcastSnapshot();
+        stage.emit("system.resumed", "Fake live backend resumed");
+        flush();
         sendAck(client, id, true);
         return;
       case "stop":
       case "reset":
-        live.splice(0, live.length);
-        links.splice(0, links.length);
-        clock = 0;
+        stage.reset();
         spawnSeq = 0;
         spawnBurst = options.spawnBurst ?? 4;
         spawnCountdown = 0;
         lastTick = Date.now();
         if (command.name === "reset") {
-          status = "ready";
-          emit("system.reset", "Fake live backend reset");
-        } else {
-          status = "ready";
+          stage.emit("system.reset", "Fake live backend reset");
         }
-        broadcastSnapshot();
+        setStatus("ready");
+        flush();
         sendAck(client, id, true);
         return;
       case "setSpeed": {
@@ -565,7 +309,7 @@ export async function startFakeLiveServer(
           sendAck(client, id, false, undefined, "speed must be positive");
           return;
         }
-        speed = multiplier;
+        stage.setSpeed(multiplier);
         broadcastSnapshot();
         sendAck(client, id, true);
         return;
@@ -581,10 +325,10 @@ export async function startFakeLiveServer(
           sendAck(client, id, false, undefined, "unknown agent");
           return;
         }
-        const agent = live.find((entry) => entry.id === agentId);
+        const agent = stage.getAgent(agentId);
         if (agent) {
           agent.state.paused = command.name === "pauseAgent";
-          emit(
+          stage.emit(
             command.name === "pauseAgent" ? "agent.paused" : "agent.resumed",
             `${agent.profile.name} ${agent.state.paused ? "is paused" : "is back"}`,
             {
@@ -592,13 +336,12 @@ export async function startFakeLiveServer(
               severity: command.name === "pauseAgent" ? "warning" : "info",
             },
           );
-          broadcastSnapshot();
+          flush();
           sendAck(client, id, true);
           return;
         }
-        if (command.name === "pauseAgent") paused = true;
-        else paused = false;
-        broadcastSnapshot();
+        stage.setGlobalPaused(command.name === "pauseAgent");
+        flush();
         sendAck(client, id, true);
         return;
       }

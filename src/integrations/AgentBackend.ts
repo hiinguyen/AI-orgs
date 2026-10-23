@@ -33,6 +33,50 @@ export interface BackendConnectionState {
 }
 
 /**
+ * What a backend can accept. Older backends never announce these, so the
+ * defaults are all true and the UI behaves exactly as before this message
+ * existed. The Claude Code bridge sends all false.
+ */
+export interface BackendCapabilities {
+  submitTask: boolean;
+  pauseAgent: boolean;
+  setSpeed: boolean;
+}
+
+export type BackendCapability = keyof BackendCapabilities;
+
+export const DEFAULT_BACKEND_CAPABILITIES: BackendCapabilities = {
+  submitTask: true,
+  pauseAgent: true,
+  setSpeed: true,
+};
+
+export function isCapabilityEnabled(
+  capabilities: BackendCapabilities,
+  capability: BackendCapability,
+): boolean {
+  return capabilities[capability];
+}
+
+/**
+ * True for the Claude Code bridge: a real (non simulated) backend that
+ * announced every capability as false. One rule, used by every panel that
+ * shows bridge-specific copy. A live backend that merely lacks one capability
+ * is not a bridge.
+ */
+export function isBridgeBackend(
+  simulated: boolean,
+  capabilities: BackendCapabilities,
+): boolean {
+  return (
+    !simulated &&
+    !capabilities.submitTask &&
+    !capabilities.pauseAgent &&
+    !capabilities.setSpeed
+  );
+}
+
+/**
  * The only boundary the UI and the 3D layer know. MockAgentBackend runs the
  * local simulation; a WebSocket backend can implement the same surface.
  */
@@ -61,5 +105,10 @@ export interface AgentBackend {
   /** Optional: only transports that can drop a connection need to report. */
   subscribeConnection?(
     listener: (state: BackendConnectionState) => void,
+  ): () => void;
+  /** Optional: what this backend accepts. Absent means every capability. */
+  getCapabilities?(): BackendCapabilities;
+  subscribeCapabilities?(
+    listener: (capabilities: BackendCapabilities) => void,
   ): () => void;
 }

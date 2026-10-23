@@ -7,6 +7,7 @@ import type { Task } from "@/tasks/taskTypes";
 import { activeTasks, queuedTasks } from "@/tasks/taskActions";
 import { feedEvents } from "@/events/eventStore";
 import { commands } from "@/integrations/backendClient";
+import { isBridgeBackend } from "@/integrations/AgentBackend";
 import { useWorldStore } from "@/state/useWorldStore";
 import { ActivityFeed } from "@/components/activity/ActivityFeed";
 import { AgentAvatar, AgentStatusPill } from "@/components/ui";
@@ -26,6 +27,7 @@ export function OverviewPanel() {
   const openTaskDialog = useWorldStore((state) => state.openTaskDialog);
   const backend = useWorldStore((state) => state.backend);
   const live = !backend.simulated;
+  const bridgeMode = isBridgeBackend(backend.simulated, backend.capabilities);
 
   const inFlight = activeTasks(tasks);
   const queuedCount = queuedTasks(tasks).length;
@@ -35,50 +37,70 @@ export function OverviewPanel() {
     <div className="px-4 py-3.5">
       {tasks.length === 0 && (
         <section className="surface-quiet p-4">
-          {!live && <p className="eyebrow text-signal">Demo</p>}
-          <h3 className="mt-1.5 text-[15px] font-semibold tracking-tight text-mist-100">
-            {live ? "Start a workflow" : "Watch the team ship a feature"}
-          </h3>
-          <p className="mt-1.5 text-[12px] leading-5 text-mist-300">
-            {live
-              ? "Run demo resets the connected service, starts it and submits one authentication task. Load sprint starts or resumes it and submits the 8-task sprint."
-              : "Orion delegates a JWT authentication task to Piper, Iris, Kai, Quinn and Rex, then the team plans, researches, builds, fails a test, fixes it and gets it reviewed."}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                void commands.runDemo();
-              }}
-            >
-              <Sparkles aria-hidden="true" />
-              Run demo
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                void commands.loadSprint();
-              }}
-            >
-              <Layers aria-hidden="true" />
-              Load sprint
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => openTaskDialog()}
-            >
-              <Plus aria-hidden="true" />
-              New task
-            </button>
-          </div>
-          <p className="mt-2.5 text-[10.5px] leading-4 text-mist-500">
-            {live
-              ? "Live backend - agents shown here come from the connected service."
-              : "Simulation mode - no live inference. The sprint adds 8 tasks, including a scripted QA failure and one task that fails after three iterations."}
-          </p>
+          {bridgeMode ? (
+            <>
+              <p className="eyebrow text-signal">Live</p>
+              <h3 className="mt-1.5 text-[15px] font-semibold tracking-tight text-mist-100">
+                Live Claude Code session
+              </h3>
+              <p className="mt-1.5 text-[12px] leading-5 text-mist-300">
+                Agents appear when Claude Code starts subagents. This view
+                follows the session; it does not create tasks or drive the
+                conversation.
+              </p>
+              <p className="mt-2.5 text-[10.5px] leading-4 text-mist-500">
+                Live backend - agents shown here come from Claude Code hooks on
+                this machine.
+              </p>
+            </>
+          ) : (
+            <>
+              {!live && <p className="eyebrow text-signal">Demo</p>}
+              <h3 className="mt-1.5 text-[15px] font-semibold tracking-tight text-mist-100">
+                {live ? "Start a workflow" : "Watch the team ship a feature"}
+              </h3>
+              <p className="mt-1.5 text-[12px] leading-5 text-mist-300">
+                {live
+                  ? "Run demo resets the connected service, starts it and submits one authentication task. Load sprint starts or resumes it and submits the 8-task sprint."
+                  : "Orion delegates a JWT authentication task to Piper, Iris, Kai, Quinn and Rex, then the team plans, researches, builds, fails a test, fixes it and gets it reviewed."}
+              </p>
+              <div className="mt-3 flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => {
+                    void commands.runDemo();
+                  }}
+                >
+                  <Sparkles aria-hidden="true" />
+                  Run demo
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    void commands.loadSprint();
+                  }}
+                >
+                  <Layers aria-hidden="true" />
+                  Load sprint
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => openTaskDialog()}
+                >
+                  <Plus aria-hidden="true" />
+                  New task
+                </button>
+              </div>
+              <p className="mt-2.5 text-[10.5px] leading-4 text-mist-500">
+                {live
+                  ? "Live backend - agents shown here come from the connected service."
+                  : "Simulation mode - no live inference. The sprint adds 8 tasks, including a scripted QA failure and one task that fails after three iterations."}
+              </p>
+            </>
+          )}
         </section>
       )}
 
@@ -135,8 +157,9 @@ export function OverviewPanel() {
           </div>
         ) : (
           <p className="mt-2 text-[11.5px] leading-5 text-mist-500">
-            Nothing in flight. Run the demo or load the sprint to watch the
-            office wake up.
+            {bridgeMode
+              ? "No live tasks. Task creation is not part of bridge mode."
+              : "Nothing in flight. Run the demo or load the sprint to watch the office wake up."}
           </p>
         )}
       </section>
