@@ -62,6 +62,7 @@ declare global {
         iteration: number;
         progress: number;
         assignedAgentId: string | null;
+        completedAt: number | null;
         subtasks: Array<{ id: string; title: string; done: boolean }>;
       }>;
       camera: { x: number; y: number; z: number };
@@ -200,6 +201,7 @@ function RenderStatsProbe() {
           iteration: task.iteration,
           progress: task.progress,
           assignedAgentId: task.assignedAgentId,
+          completedAt: task.completedAt, // Used by the browser checks.
           subtasks: task.subtasks.map((subtask) => ({
             id: subtask.id,
             title: subtask.title,

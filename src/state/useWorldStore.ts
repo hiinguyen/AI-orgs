@@ -1,17 +1,20 @@
 import { create } from "zustand";
-import type { AgentId, AgentState } from "@/agents/agentTypes";
-import type { LocationId } from "@/simulation/worldLayout";
-import { SIMULATION_CONFIG } from "@/simulation/simulationConfig";
+import type { AgentId, AgentState } from "../agents/agentTypes.ts";
+import type { LocationId } from "../simulation/worldLayout.ts";
+import { SIMULATION_CONFIG } from "../simulation/simulationConfig.ts";
 import type {
   SimulationStatus,
   WorldSnapshot,
-} from "@/integrations/AgentBackend";
-import type { AgentEvent } from "@/events/eventTypes";
-import { appendEvent } from "@/events/eventStore";
-import { MIRROR_INTERVAL_MS, ThrottledMirror } from "./mirrorThrottle";
-import type { QualityMode } from "./qualityPolicy";
+} from "../integrations/AgentBackend.ts";
+import type { AgentEvent } from "../events/eventTypes.ts";
+import { appendEvent } from "../events/eventStore.ts";
+import { DEFAULT_SOUND_SETTINGS } from "../audio/soundCues.ts";
+import type { SoundSettings } from "../audio/soundCues.ts";
+import { MIRROR_INTERVAL_MS, ThrottledMirror } from "./mirrorThrottle.ts";
+import type { QualityMode } from "./qualityPolicy.ts";
 
-export type { QualityMode } from "./qualityPolicy";
+export type { QualityMode } from "./qualityPolicy.ts";
+export type { SoundSettings } from "../audio/soundCues.ts";
 
 /**
  * The mutable per-frame snapshot buffer. The 3D layer reads this inside
@@ -60,16 +63,6 @@ export interface BackendInfo {
 export interface OverlaySettings {
   walkingPaths: boolean;
   speechIndicators: boolean;
-}
-
-/**
- * Sound settings shape shared with the phase 7 audio engine. Nothing is
- * persisted yet; the toggles only move the store.
- */
-export interface SoundSettings {
-  enabled: boolean;
-  volume: number;
-  ambient: boolean;
 }
 
 export interface WorldStore {
@@ -198,7 +191,7 @@ export const useWorldStore = create<WorldStore>()((set) => {
       connected: false,
       error: null,
     },
-    sound: { enabled: true, volume: 0.6, ambient: true },
+    sound: { ...DEFAULT_SOUND_SETTINGS },
 
     setActiveTab: (tab) => set({ activeTab: tab }),
 

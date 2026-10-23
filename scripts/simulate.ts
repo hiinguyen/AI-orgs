@@ -15,8 +15,9 @@ import {
   runDemoSuite,
 } from "./tests/engine.ts";
 import { runAgentsSuite } from "./tests/agents.ts";
-import { runMotionSuite } from "./tests/motion.ts";
+import { runReducedMotionSuite } from "./tests/motion.ts";
 import { runQualitySuite } from "./tests/quality.ts";
+import { runSoundSuite } from "./tests/sound.ts";
 import { runMirrorSuite } from "./tests/store.ts";
 import { runLifecycleSuite, runStateMachineSuite } from "./tests/workflow.ts";
 import type { TestReporter } from "./tests/harness.ts";
@@ -51,7 +52,8 @@ async function main(): Promise<void> {
   runMirrorSuite(reporter);
   runBoardsSuite(reporter);
   runQualitySuite(reporter);
-  runMotionSuite(reporter);
+  runReducedMotionSuite(reporter);
+  await runSoundSuite(reporter);
   await runBackendSuite(reporter);
 
   console.log("");

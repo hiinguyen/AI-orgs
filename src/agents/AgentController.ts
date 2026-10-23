@@ -373,6 +373,7 @@ export class AgentController {
           this.emit({
             type: "agent.arrived",
             agentId: this.profile.id,
+            taskId: this.state.currentTaskId ?? undefined,
             message: `${this.profile.name} arrived at ${LOCATIONS[location].label}`,
             severity: "info",
             feed: false,

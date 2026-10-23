@@ -11,11 +11,6 @@ export const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
 
 export const reducedMotion = { current: false };
 
-/** Update the flag without touching the DOM (also used by the checks). */
-export function setReducedMotion(value: boolean): void {
-  reducedMotion.current = value;
-}
-
 /**
  * Sync the flag with matchMedia and keep it live. Returns the unsubscribe
  * used by the AppShell effect cleanup.

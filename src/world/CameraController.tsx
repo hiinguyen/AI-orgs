@@ -157,47 +157,41 @@ function followStep(
 ): void {
   const visual = agentVisuals[followId];
   scratchTarget.set(visual.x, 1, visual.z);
+  const previousX = controls.target.x;
+  const previousY = controls.target.y;
+  const previousZ = controls.target.z;
   if (calm) {
-    // Reduced motion: follow is a snap, not a smooth chase. Shift the camera
-    // by the clamped target delta, otherwise the camera creeps away from the
-    // robot once the target stops at a limit.
-    const previousX = controls.target.x;
-    const previousY = controls.target.y;
-    const previousZ = controls.target.z;
+    // Reduced motion: follow is a snap, not a smooth chase.
     controls.target.copy(scratchTarget);
-    clampTarget(controls.target);
-    camera.position.x += controls.target.x - previousX;
-    camera.position.y += controls.target.y - previousY;
-    camera.position.z += controls.target.z - previousZ;
-    return;
+  } else {
+    controls.target.set(
+      THREE.MathUtils.damp(
+        previousX,
+        scratchTarget.x,
+        FOLLOW_LAMBDA,
+        delta,
+      ),
+      THREE.MathUtils.damp(
+        previousY,
+        scratchTarget.y,
+        FOLLOW_LAMBDA,
+        delta,
+      ),
+      THREE.MathUtils.damp(
+        previousZ,
+        scratchTarget.z,
+        FOLLOW_LAMBDA,
+        delta,
+      ),
+    );
   }
-  const shiftX =
-    THREE.MathUtils.damp(
-      controls.target.x,
-      scratchTarget.x,
-      FOLLOW_LAMBDA,
-      delta,
-    ) - controls.target.x;
-  const shiftY =
-    THREE.MathUtils.damp(
-      controls.target.y,
-      scratchTarget.y,
-      FOLLOW_LAMBDA,
-      delta,
-    ) - controls.target.y;
-  const shiftZ =
-    THREE.MathUtils.damp(
-      controls.target.z,
-      scratchTarget.z,
-      FOLLOW_LAMBDA,
-      delta,
-    ) - controls.target.z;
-  controls.target.x += shiftX;
-  controls.target.y += shiftY;
-  controls.target.z += shiftZ;
-  camera.position.x += shiftX;
-  camera.position.y += shiftY;
-  camera.position.z += shiftZ;
+  // Clamp before shifting the camera, so the camera moves by the clamped
+  // target delta the same way in both branches and never creeps away from
+  // the robot once the target stops at a limit.
+  clampTarget(controls.target);
+  camera.position.x += controls.target.x - previousX;
+  camera.position.y += controls.target.y - previousY;
+  camera.position.z += controls.target.z - previousZ;
 }
 
 /** Damp the orbit target and camera position towards an active move goal. */
