@@ -141,9 +141,11 @@ export function PlanningBoard() {
     // The engine caches a bounding sphere on first cull. With count 0 that
     // sphere would sit empty at the group origin, so give the mesh a fixed
     // sphere that covers every card position on the board face instead.
+    // Card z is BOARD_CENTER_Z - u, so a centred grid spans both sides of 0.
     const centerY = BOARD_BOTTOM_Y + PLANNING_BOARD.height / 2;
+    const centerZ = BOARD_CENTER_Z - PLANNING_BOARD.width / 2;
     mesh.boundingSphere = new THREE.Sphere(
-      new THREE.Vector3(CARD_X, centerY, BOARD_CENTER_Z),
+      new THREE.Vector3(CARD_X, centerY, centerZ),
       Math.hypot(PLANNING_BOARD.width / 2, PLANNING_BOARD.height / 2) + 0.1,
     );
     // Allocate the instance colour buffer before the first render so the
