@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, type JSX, type RefObject } from "react";
+import { useLayoutEffect, useRef, type JSX, type RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { AgentId, AgentState } from "@/agents/agentTypes";
@@ -190,7 +190,9 @@ function writeMonitorMatrices(
   });
 }
 
-function useDeskRefs(): DeskRefs {
+function useDeskMeshes(
+  screensRef: RefObject<ScreenEntry[] | null>,
+): DeskRefs {
   const slabs = useRef<THREE.InstancedMesh>(null);
   const bases = useRef<THREE.InstancedMesh>(null);
   const keyboards = useRef<THREE.InstancedMesh>(null);
@@ -199,19 +201,58 @@ function useDeskRefs(): DeskRefs {
   const stands = useRef<THREE.InstancedMesh>(null);
   const contact = useRef<THREE.InstancedMesh>(null);
   const pools = useRef<THREE.InstancedMesh>(null);
-  return useMemo(
-    () => ({
-      slabs,
-      bases,
-      keyboards,
-      strips,
-      frames,
-      stands,
-      contact,
-      pools,
-    }),
-    [slabs, bases, keyboards, strips, frames, stands, contact, pools],
-  );
+
+  useLayoutEffect(() => {
+    const dummy = new THREE.Object3D();
+    const color = new THREE.Color();
+    const deskMeshes: DeskInstances = {
+      slabs: slabs.current,
+      bases: bases.current,
+      keyboards: keyboards.current,
+      strips: strips.current,
+      contact: contact.current,
+      pools: pools.current,
+    };
+    writeDeskMatrices(deskMeshes, dummy, color);
+    writeMonitorMatrices(frames.current, stands.current, dummy);
+
+    for (const mesh of Object.values(deskMeshes)) {
+      if (mesh) mesh.instanceMatrix.needsUpdate = true;
+    }
+    if (frames.current) frames.current.instanceMatrix.needsUpdate = true;
+    if (stands.current) stands.current.instanceMatrix.needsUpdate = true;
+    if (strips.current?.instanceColor) {
+      strips.current.instanceColor.needsUpdate = true;
+    }
+    writeInitialPoolColors(screensRef.current, pools.current);
+  }, [screensRef]);
+
+  return {
+    slabs,
+    bases,
+    keyboards,
+    strips,
+    frames,
+    stands,
+    contact,
+    pools,
+  };
+}
+
+/** Seed each floor pool with its owner colour at the idle level. */
+function writeInitialPoolColors(
+  screens: ScreenEntry[] | null,
+  poolMesh: THREE.InstancedMesh | null,
+): void {
+  if (!poolMesh || !screens) return;
+  screens.forEach((entry, index) => {
+    poolScratch.copy(entry.color).multiplyScalar(entry.poolLevel);
+    poolMesh.setColorAt(index, poolScratch);
+  });
+  if (poolMesh.instanceColor) {
+    poolMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
+    poolMesh.instanceColor.needsUpdate = true;
+  }
 }
 
 function useScreenEntries(): RefObject<ScreenEntry[] | null> {
@@ -228,49 +269,6 @@ function useScreenEntries(): RefObject<ScreenEntry[] | null> {
     });
   }
   return screens;
-}
-
-/** Write every static matrix once, plus the initial pool colours. */
-function useDeskLayout(
-  refs: DeskRefs,
-  screensRef: RefObject<ScreenEntry[] | null>,
-): void {
-  useLayoutEffect(() => {
-    const dummy = new THREE.Object3D();
-    const color = new THREE.Color();
-    const deskMeshes: DeskInstances = {
-      slabs: refs.slabs.current,
-      bases: refs.bases.current,
-      keyboards: refs.keyboards.current,
-      strips: refs.strips.current,
-      contact: refs.contact.current,
-      pools: refs.pools.current,
-    };
-    writeDeskMatrices(deskMeshes, dummy, color);
-    writeMonitorMatrices(refs.frames.current, refs.stands.current, dummy);
-
-    for (const mesh of Object.values(deskMeshes)) {
-      if (mesh) mesh.instanceMatrix.needsUpdate = true;
-    }
-    if (refs.frames.current) refs.frames.current.instanceMatrix.needsUpdate = true;
-    if (refs.stands.current) refs.stands.current.instanceMatrix.needsUpdate = true;
-    if (refs.strips.current?.instanceColor) {
-      refs.strips.current.instanceColor.needsUpdate = true;
-    }
-
-    const poolMesh = refs.pools.current;
-    const screens = screensRef.current;
-    if (poolMesh && screens) {
-      screens.forEach((entry, index) => {
-        poolScratch.copy(entry.color).multiplyScalar(entry.poolLevel);
-        poolMesh.setColorAt(index, poolScratch);
-      });
-      if (poolMesh.instanceColor) {
-        poolMesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
-        poolMesh.instanceColor.needsUpdate = true;
-      }
-    }
-  }, [refs, screensRef]);
 }
 
 /** Damp each owner's monitor glow and floor pool towards the live status. */
@@ -323,51 +321,65 @@ function useScreenGlow(
 }
 
 interface DeskInstanceProps {
-  meshes: DeskRefs;
+  slabs: RefObject<THREE.InstancedMesh | null>;
+  bases: RefObject<THREE.InstancedMesh | null>;
+  keyboards: RefObject<THREE.InstancedMesh | null>;
+  strips: RefObject<THREE.InstancedMesh | null>;
+  frames: RefObject<THREE.InstancedMesh | null>;
+  stands: RefObject<THREE.InstancedMesh | null>;
+  contact: RefObject<THREE.InstancedMesh | null>;
+  pools: RefObject<THREE.InstancedMesh | null>;
   stripMaterial: THREE.MeshBasicMaterial;
 }
 
 function DeskInstances({
-  meshes,
+  slabs,
+  bases,
+  keyboards,
+  strips,
+  frames,
+  stands,
+  contact,
+  pools,
   stripMaterial,
 }: DeskInstanceProps): JSX.Element {
   return (
     <group>
       <instancedMesh
-        ref={meshes.slabs}
+        ref={slabs}
         args={[geometries.deskSlab, materials.desk, STATIONS.length]}
         castShadow
         receiveShadow
       />
       <instancedMesh
-        ref={meshes.bases}
+        ref={bases}
         args={[geometries.deskBase, materials.chair, STATIONS.length]}
         castShadow
       />
       <instancedMesh
-        ref={meshes.keyboards}
+        ref={keyboards}
         args={[geometries.keyboard, materials.screenFrame, STATIONS.length]}
         castShadow
       />
       <instancedMesh
-        ref={meshes.strips}
+        ref={strips}
         args={[geometries.box, stripMaterial, STATIONS.length]}
       />
       <instancedMesh
-        ref={meshes.frames}
+        ref={frames}
         args={[geometries.monitorFrame, materials.screenFrame, MONITORS.length]}
         castShadow
       />
       <instancedMesh
-        ref={meshes.stands}
+        ref={stands}
         args={[geometries.monitorStand, materials.metal, MONITORS.length]}
       />
       <instancedMesh
-        ref={meshes.contact}
+        ref={contact}
         args={[geometries.plane, materials.contactShadow, STATIONS.length]}
       />
       <instancedMesh
-        ref={meshes.pools}
+        ref={pools}
         args={[geometries.plane, materials.statusGlow, STATIONS.length]}
       />
     </group>
@@ -391,8 +403,8 @@ function MonitorScreens(): JSX.Element {
 }
 
 export function Desks(): JSX.Element {
-  const meshes = useDeskRefs();
   const screens = useScreenEntries();
+  const meshes = useDeskMeshes(screens);
   const stripMaterial = sharedMaterial(
     "desk-accent-strips",
     () =>
@@ -402,12 +414,21 @@ export function Desks(): JSX.Element {
       }),
   );
 
-  useDeskLayout(meshes, screens);
   useScreenGlow(screens, meshes.pools);
 
   return (
     <group>
-      <DeskInstances meshes={meshes} stripMaterial={stripMaterial} />
+      <DeskInstances
+        slabs={meshes.slabs}
+        bases={meshes.bases}
+        keyboards={meshes.keyboards}
+        strips={meshes.strips}
+        frames={meshes.frames}
+        stands={meshes.stands}
+        contact={meshes.contact}
+        pools={meshes.pools}
+        stripMaterial={stripMaterial}
+      />
       <MonitorScreens />
     </group>
   );
