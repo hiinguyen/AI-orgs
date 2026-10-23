@@ -55,3 +55,15 @@ export function findAgentState(
   }
   return undefined;
 }
+
+/**
+ * One freeze condition for every animated surface: the agent is missing or
+ * paused, or the simulation is not running. Matches the animator's 0.15x
+ * slow-down and the hub ring's pulse clock.
+ */
+export function agentFrozen(
+  agent: AgentState | undefined,
+  running: boolean,
+): boolean {
+  return agent === undefined || agent.paused || !running;
+}

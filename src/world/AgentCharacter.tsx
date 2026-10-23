@@ -20,7 +20,7 @@ import {
   useWorldStore,
   type WorldStore,
 } from "@/state/useWorldStore";
-import { agentVisuals, findAgentState } from "./agentVisuals";
+import { agentFrozen, agentVisuals, findAgentState } from "./agentVisuals";
 import { labelAnchorFor } from "@/world/labelAnchors";
 import {
   ACCESSORY_LAYOUT,
@@ -96,6 +96,12 @@ const pulseRingMaterial = sharedMaterial(
 );
 
 const selectionRingMaterial = hoverRingMaterial(SELECTION_COLOR);
+
+/**
+ * Rig inputs for the animator, precomputed once per agent. Building these in
+ * the frame loop allocated one object per agent per frame.
+ */
+const ROBOT_ANIMATOR_INPUTS = ROBOT_RIGS.map((rig) => animatorInputsFor(rig));
 
 interface VisualState {
   x: number;
@@ -177,7 +183,7 @@ function updateVisualStatus(
     visual.lastStatus = status;
   }
 
-  const frozen = !agent || agent.paused || !running;
+  const frozen = agentFrozen(agent, running);
   if (visual.pulse < PULSE_DURATION) {
     // Real time, so a pause cannot freeze a bright ring; the usual
     // frozen slow-down keeps the pulse from ticking while paused.
@@ -305,13 +311,13 @@ function writeAgentVisual(
 ): void {
   const profile = ROBOT_PROFILES[agentIndex];
   const rig = ROBOT_RIGS[agentIndex];
-  const frozen = !agent || agent.paused || !context.running;
+  const frozen = agentFrozen(agent, context.running);
   const pose = visual.animator.update(
     delta,
     status,
     visual.speed,
     frozen,
-    animatorInputsFor(rig).legLength,
+    ROBOT_ANIMATOR_INPUTS[agentIndex].legLength,
   );
 
   publishVisualPose(profile, visual, rig);

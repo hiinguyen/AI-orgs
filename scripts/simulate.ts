@@ -8,6 +8,7 @@
  * assertion and exits 1 if anything fails.
  */
 import { runBackendSuite } from "./tests/backend.ts";
+import { runBoardsSuite } from "./tests/boards.ts";
 import {
   runBacklogSuite,
   runConcurrencySuite,
@@ -46,6 +47,7 @@ async function main(): Promise<void> {
   runBacklogSuite(reporter);
   runAgentsSuite(reporter);
   runMirrorSuite(reporter);
+  runBoardsSuite(reporter);
   await runBackendSuite(reporter);
 
   console.log("");

@@ -6,7 +6,7 @@ import {
   boardTexture,
   floorTexture,
   glowTexture,
-  missionControlTexture,
+  missionControlSurface,
   screenTexture,
   windowsTexture,
 } from "./proceduralTextures";
@@ -397,12 +397,12 @@ export const materials = {
   },
   get missionScreen(): THREE.MeshStandardMaterial {
     return sharedMaterial("mission-screen", () => {
-      const texture = missionControlTexture();
+      const texture = missionControlSurface().texture;
       return new THREE.MeshStandardMaterial({
         map: texture,
         emissiveMap: texture,
         emissive: "#ffffff",
-        emissiveIntensity: 1.05,
+        emissiveIntensity: 1.15,
         color: "#ffffff",
         roughness: 0.42,
         metalness: 0.16,
@@ -478,6 +478,22 @@ export const materials = {
         }),
     );
   },
+  /** Per-station pool tinted by the owner's status through instance colours. */
+  get statusGlow(): THREE.MeshBasicMaterial {
+    return sharedMaterial(
+      "status-glow",
+      () =>
+        new THREE.MeshBasicMaterial({
+          map: glowTexture(),
+          color: "#ffffff",
+          transparent: true,
+          opacity: 0.38,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          toneMapped: false,
+        }),
+    );
+  },
   get ceramic(): THREE.MeshStandardMaterial {
     return sharedMaterial(
       "ceramic",
@@ -517,7 +533,7 @@ export const materials = {
       "sticky-card",
       () =>
         new THREE.MeshStandardMaterial({
-          color: "#f0c96e",
+          color: "#ffffff",
           roughness: 0.82,
           metalness: 0,
         }),
