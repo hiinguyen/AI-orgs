@@ -9,13 +9,21 @@ const MAX_TOOL_NAME = 40;
 const MAX_TARGET = 80;
 const MAX_COMMAND = 60;
 const MAX_SUMMARY = 120;
+/**
+ * Upper bound on what `redact` scans. The patterns below backtrack
+ * quadratically on long identifier or `://` runs, so an unbounded input could
+ * block the single-threaded bridge. Every value the bridge displays is far
+ * shorter than this, so only the tail of longer input is dropped.
+ */
+export const MAX_REDACT_INPUT = 2048;
 
 const AUTHORIZATION_PATTERN =
   /\bAuthorization\b\s*[:=]\s*(?:(?:Bearer|Basic|Token|Digest)\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi;
 const BEARER_PATTERN = /\bBearer\s+[A-Za-z0-9\-._~+/]+=*/gi;
 // Identifier prefix/suffix lets GITHUB_TOKEN, DB_PASSWORD and
-// AWS_SECRET_ACCESS_KEY match. Every quantifier is single-level, so the scan
-// stays linear on long inputs.
+// AWS_SECRET_ACCESS_KEY match. The two `[A-Za-z0-9_]*` runs overlap, so the
+// scan is quadratic in the length of an identifier run. `redact` caps its
+// input at MAX_REDACT_INPUT before running this pattern.
 const SECRET_ASSIGNMENT_PATTERN =
   /\b([A-Za-z0-9_]*(?:token|password|passwd|pwd|secret|api[_-]?key|access[_-]?key)[A-Za-z0-9_]*)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s&;|,]+)/gi;
 const SECRET_FLAG_PATTERN =
@@ -31,9 +39,17 @@ export function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
 }
 
-/** Mask the obvious secret shapes in a command or free text. */
+/**
+ * Mask the obvious secret shapes in a command or free text.
+ *
+ * Whitespace is collapsed first, in one linear pass, so the length cap counts
+ * the characters that can be displayed. Without this, a long run of spaces
+ * could push a secret's start just inside the cap and leave a short fragment
+ * of it unmasked. The cap then runs before any backtracking pattern.
+ */
 export function redact(value: string): string {
-  return value
+  const bounded = value.replace(/\s+/g, " ").slice(0, MAX_REDACT_INPUT);
+  return bounded
     .replace(AUTHORIZATION_PATTERN, "Authorization: [redacted]")
     .replace(BEARER_PATTERN, "Bearer [redacted]")
     .replace(URL_CREDENTIALS_PATTERN, "://[redacted]@")
@@ -43,7 +59,6 @@ export function redact(value: string): string {
     .replace(SK_KEY_PATTERN, "[redacted]")
     .replace(GITHUB_TOKEN_PATTERN, "[redacted]")
     .replace(AWS_ACCESS_KEY_PATTERN, "[redacted]")
-    .replace(/\s+/g, " ")
     .trim();
 }
 

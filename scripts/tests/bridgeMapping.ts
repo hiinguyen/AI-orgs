@@ -537,6 +537,33 @@ function runRedactionSuite(reporter: TestReporter): void {
     Date.now() - started < 100,
   );
 
+  const backtrackInputs: ReadonlyArray<readonly [string, string]> = [
+    ["a 200 KB run of secret keywords", "token".repeat(40_000)],
+    ["a 200 KB run of URL credential prefixes", "://a:".repeat(40_000)],
+  ];
+  for (const [label, input] of backtrackInputs) {
+    const begin = Date.now();
+    redact(input);
+    check(
+      `redact finishes in under 100 ms on ${label}`,
+      Date.now() - begin < 100,
+    );
+  }
+
+  const early = `${"x ".repeat(1000)}export GITHUB_TOKEN=abcd1234efgh x`;
+  const earlyMasked = redact(early);
+  check(
+    "a secret inside the first 2048 characters is still masked",
+    earlyMasked.includes("[redacted]") &&
+      !earlyMasked.includes("abcd1234efgh"),
+  );
+
+  const afterSpaces = redact(`${" ".repeat(2040)}ghp_ABCDEFGHIJ`);
+  check(
+    "a secret after a long whitespace run is not cut into a visible fragment",
+    !afterSpaces.includes("ghp_ABCD") && afterSpaces.includes("[redacted]"),
+  );
+
   const command = `npm run ${"x".repeat(200)}`;
   const bash = toolTarget("Bash", { command }, "/repo");
   check(
