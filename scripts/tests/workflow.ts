@@ -203,10 +203,11 @@ function resetScenario(reporter: TestReporter): void {
     reset.agents.every((agent) => {
       const profile = AGENTS.find((entry) => entry.id === agent.id);
       if (!profile) return false;
-      const slot = slotFor(profile.home, profile.seat);
+      const home = profile.home ?? "hub";
+      const slot = slotFor(home, profile.seat);
       return (
         agent.status === "idle" &&
-        agent.location === profile.home &&
+        agent.location === home &&
         Math.abs(agent.position.x - slot.x) < 1e-6 &&
         Math.abs(agent.position.z - slot.z) < 1e-6
       );
@@ -325,11 +326,12 @@ function midFlightReset(reporter: TestReporter): void {
     reset.agents.every((agent) => {
       const profile = AGENTS.find((entry) => entry.id === agent.id);
       if (!profile) return false;
-      const slot = slotFor(profile.home, profile.seat);
+      const home = profile.home ?? "hub";
+      const slot = slotFor(home, profile.seat);
       return (
         agent.status === "idle" &&
         !agent.paused &&
-        agent.location === profile.home &&
+        agent.location === home &&
         Math.abs(agent.position.x - slot.x) < 1e-6 &&
         Math.abs(agent.position.z - slot.z) < 1e-6
       );

@@ -1,6 +1,6 @@
 "use client";
 
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import type { Task } from "@/tasks/taskTypes";
 import { PHASE_LABELS } from "@/tasks/taskTypes";
 import {
@@ -28,7 +28,7 @@ export function TaskCard({
   onSelect: (taskId: string) => void;
 }) {
   const owner = task.assignedAgentId
-    ? AGENT_BY_ID[task.assignedAgentId]
+    ? getAgentProfile(task.assignedAgentId)
     : null;
 
   return (

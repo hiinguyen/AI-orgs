@@ -5,6 +5,7 @@
  */
 import type { AgentId } from "../agents/agentTypes.ts";
 import type { AgentEvent, AgentEventType } from "../events/eventTypes.ts";
+import { hashString } from "../simulation/EventBus.ts";
 
 export type CueId =
   | "taskCreated"
@@ -22,7 +23,9 @@ export type CueId =
   | "rise"
   | "fall"
   | "resetSweep"
-  | "footstep";
+  | "footstep"
+  | "spawn"
+  | "despawn";
 
 export interface SoundSettings {
   enabled: boolean;
@@ -45,7 +48,7 @@ export interface StorageLike {
 }
 
 /** Speaker pitches from spec section 8: C5, E5, D5, A4, F5, G4. */
-export const SPEAKER_PITCH: Readonly<Record<AgentId, number>> = {
+export const SPEAKER_PITCH: Readonly<Record<string, number>> = {
   orion: 523,
   piper: 659,
   iris: 587,
@@ -54,11 +57,37 @@ export const SPEAKER_PITCH: Readonly<Record<AgentId, number>> = {
   rex: 392,
 };
 
+/**
+ * C major pentatonic across C4..C6. Live agents hash into this table, so any
+ * number of subagents gets a musical speaking voice inside the range without
+ * colliding with the six core pitches.
+ */
+export const LIVE_SPEAKER_PITCHES: readonly number[] = [
+  261.63, // C4
+  293.66, // D4
+  329.63, // E4
+  392.0, // G4
+  440.0, // A4
+  523.25, // C5
+  587.33, // D5
+  659.25, // E5
+  783.99, // G5
+  880.0, // A5
+  1046.5, // C6
+];
+
 /** Fallback for an event with no speaker. */
 const FALLBACK_PITCH = SPEAKER_PITCH.orion;
 
 export function speakerPitch(agentId?: AgentId | null): number {
-  return agentId ? SPEAKER_PITCH[agentId] : FALLBACK_PITCH;
+  if (!agentId) return FALLBACK_PITCH;
+  if (Object.hasOwn(SPEAKER_PITCH, agentId)) {
+    const core = SPEAKER_PITCH[agentId];
+    if (Number.isFinite(core)) return core;
+  }
+  const hashed =
+    LIVE_SPEAKER_PITCHES[hashString(agentId) % LIVE_SPEAKER_PITCHES.length];
+  return Number.isFinite(hashed) ? hashed : FALLBACK_PITCH;
 }
 
 /**
@@ -95,6 +124,8 @@ const CUE_BY_EVENT: Readonly<Record<AgentEventType, CueId | null>> = {
   "agent.paused": "downBlips",
   "agent.resumed": "upBlips",
   "agent.ambient": null,
+  "agent.spawned": "spawn",
+  "agent.despawned": "despawn",
 };
 
 /**

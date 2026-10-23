@@ -5,11 +5,29 @@ import { Check } from "lucide-react";
 import { useWorldStore } from "@/state/useWorldStore";
 import { Logo, cn } from "@/components/ui";
 
-const STEPS = [
+/**
+ * Mirrors the selection in getBackend() (integrations/backendClient.ts). The
+ * store's backend flag starts as simulated and only changes once
+ * connectBackend() runs, so the loading copy reads the env directly to avoid
+ * flashing simulation wording in live mode.
+ */
+const IS_LIVE_BACKEND =
+  process.env.NEXT_PUBLIC_AGENT_BACKEND === "websocket" &&
+  Boolean(process.env.NEXT_PUBLIC_AGENT_WS_URL);
+
+const SIMULATION_STEPS = [
   "Booting simulation engine",
   "Building the office",
   "Waking up agents",
 ];
+
+const LIVE_STEPS = [
+  "Booting the agent engine",
+  "Building the office",
+  "Waking up agents",
+];
+
+const STEPS = IS_LIVE_BACKEND ? LIVE_STEPS : SIMULATION_STEPS;
 
 export function LoadingScreen() {
   const sceneReady = useWorldStore((state) => state.sceneReady);
@@ -70,7 +88,9 @@ export function LoadingScreen() {
         AI Agent World
       </p>
       <p className="mt-1 text-[11px] text-mist-500">
-        Preparing the local simulation office
+        {IS_LIVE_BACKEND
+          ? "Preparing the office"
+          : "Preparing the local simulation office"}
       </p>
 
       <ol className="mt-7 space-y-2.5">

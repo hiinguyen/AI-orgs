@@ -1,31 +1,31 @@
 import * as THREE from "three";
-import type { AgentId } from "@/agents/agentTypes";
-import { AGENT_IDS } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import type { AgentId, AgentRole } from "@/agents/agentTypes";
+import { MAX_AGENTS } from "@/agents/agentTypes";
 import type { AgentPose } from "@/agents/AgentAnimator";
 import type { AgentRig } from "@/agents/agentRigs";
-import {
-  ARM_SPREAD,
-  LEG_SPREAD,
-  chestHeight,
-  rigFor,
-} from "@/agents/agentRigs";
+import { ARM_SPREAD, LEG_SPREAD, chestHeight } from "@/agents/agentRigs";
 import { labelScale } from "@/agents/agentMath";
 import {
   ACCESSORY_POOLS,
-  buildAccessoryLayout,
+  ACCESSORY_SLOTS_PER_ROBOT,
+  ROLE_ACCESSORY_LAYOUT,
   type AccessoryPool,
 } from "@/agents/robotAccessories";
 import type { LabelAnchor } from "./labelAnchors";
 import { CAMERA_FOV } from "./cameraPresets";
 
 /**
- * The robot rig in world space: one shared skeleton writer for the six
- * instanced characters. The pelvis carries the legs and feet and only bobs
+ * The robot rig in world space: one shared skeleton writer for every robot
+ * slot in the pool. The pelvis carries the legs and feet and only bobs
  * vertically; the lean lives on the torso, arms and head. Static accessory
  * offsets are composed once at module load instead of every frame.
+ *
+ * Phase 9: slots are dynamic. Slot 0..5 are the core agents, live agents take
+ * the rest, and every per-slot buffer is sized for the protocol cap so no
+ * spawn ever reallocates an InstancedMesh.
  */
 
+export const MAX_ROBOTS = MAX_AGENTS;
 export const SELECTION_COLOR = "#e6eef8";
 export const STATUS_RING_RADIUS = 0.7;
 export const SELECTION_RING_RADIUS = 0.95;
@@ -37,24 +37,21 @@ export const SELECTION_RING_Y = 0.018;
 export const PULSE_RING_Y = 0.02;
 export const CONTACT_SHADOW_Y = 0.008;
 
-export const ROBOT_PROFILES = AGENT_IDS.map((id) => AGENT_BY_ID[id]);
-export const ROBOT_RIGS: readonly AgentRig[] = ROBOT_PROFILES.map((profile) =>
-  rigFor(profile.role),
-);
-export const ROBOT_COUNT = AGENT_IDS.length;
-export const ROBOT_HOVER_IDS = AGENT_IDS.map((id) => `agent:${id}`);
-export const ROBOT_COLORS: readonly THREE.Color[] = ROBOT_PROFILES.map(
-  (profile) => new THREE.Color(profile.color),
-);
-export const ACCESSORY_LAYOUT = buildAccessoryLayout(ROBOT_RIGS);
+export const ROBOT_CAPSULE_COUNT = MAX_ROBOTS * 5;
+export const ROBOT_HEAD_COUNT = MAX_ROBOTS;
+export const ROBOT_HAND_COUNT =
+  MAX_ROBOTS * ACCESSORY_SLOTS_PER_ROBOT.jointSpheres + MAX_ROBOTS * 2;
+export const ROBOT_FOOT_COUNT =
+  MAX_ROBOTS * ACCESSORY_SLOTS_PER_ROBOT.jointBoxes + MAX_ROBOTS * 2;
 
-export { ACCESSORY_POOLS };
-export type { AccessoryPool };
+export function accessoryInstanceCount(pool: AccessoryPool): number {
+  return MAX_ROBOTS * ACCESSORY_SLOTS_PER_ROBOT[pool];
+}
 
 export interface RobotPools {
   capsules: THREE.InstancedMesh | null;
   heads: THREE.InstancedMesh | null;
-  chests: Array<THREE.Mesh | null>;
+  chests: THREE.InstancedMesh | null;
   accessories: Record<AccessoryPool, THREE.InstancedMesh | null>;
 }
 
@@ -67,10 +64,9 @@ export interface RobotRings {
 
 export type PulseTone = "success" | "error";
 
-const HAND_INDEX = ACCESSORY_LAYOUT.counts.jointSpheres;
-const FOOT_INDEX = ACCESSORY_LAYOUT.counts.jointBoxes;
-export const JOINT_SPHERE_COUNT = HAND_INDEX + ROBOT_COUNT * 2;
-export const JOINT_BOX_COUNT = FOOT_INDEX + ROBOT_COUNT * 2;
+const HAND_INDEX =
+  MAX_ROBOTS * ACCESSORY_SLOTS_PER_ROBOT.jointSpheres;
+const FOOT_INDEX = MAX_ROBOTS * ACCESSORY_SLOTS_PER_ROBOT.jointBoxes;
 
 const PULSE_GREEN = new THREE.Color("#6fe3a4");
 const PULSE_AMBER = new THREE.Color("#f2b46a");
@@ -90,6 +86,7 @@ const mHead = new THREE.Matrix4();
 const mLocal = new THREE.Matrix4();
 const mChain = new THREE.Matrix4();
 const mPart = new THREE.Matrix4();
+const zeroMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 
 function trs(
   out: THREE.Matrix4,
@@ -104,18 +101,40 @@ function trs(
   return out.compose(scratchPosition, scratchQuaternion, scratchScale);
 }
 
-/** Static accessory transforms, compiled once for the lifetime of the tab. */
-const ACCESSORY_LOCAL_MATRICES: readonly (readonly THREE.Matrix4[])[] =
-  ACCESSORY_LAYOUT.slots.map((slots) =>
-    slots.map((slot) =>
-      trs(
-        new THREE.Matrix4(),
-        slot.position,
-        slot.rotation,
-        slot.scale,
-      ),
-    ),
-  );
+interface RoleAccessoryEntry {
+  pool: AccessoryPool;
+  space: "head" | "body" | "pelvis";
+  index: number;
+  matrix: THREE.Matrix4;
+}
+
+/** Static accessory transforms per role, compiled once for the tab. */
+const ROLE_ACCESSORIES: Readonly<Record<AgentRole, readonly RoleAccessoryEntry[]>> =
+  (() => {
+    const roles: AgentRole[] = [
+      "orchestrator",
+      "researcher",
+      "product_manager",
+      "engineer",
+      "qa",
+      "reviewer",
+    ];
+    const table = {} as Record<AgentRole, RoleAccessoryEntry[]>;
+    for (const role of roles) {
+      table[role] = ROLE_ACCESSORY_LAYOUT[role].slots.map((slot) => ({
+        pool: slot.pool,
+        space: slot.space,
+        index: slot.localIndex,
+        matrix: trs(
+          new THREE.Matrix4(),
+          slot.position,
+          slot.rotation,
+          slot.scale,
+        ),
+      }));
+    }
+    return table;
+  })();
 
 function scaledAt(
   out: THREE.Matrix4,
@@ -146,7 +165,7 @@ function floorRing(
 
 /** Torso capsule in the leaning body frame. */
 function writeTorso(
-  agentIndex: number,
+  slotIndex: number,
   rig: AgentRig,
   pools: RobotPools,
 ): void {
@@ -160,12 +179,12 @@ function writeTorso(
     rig.torsoDepth,
   );
   mPart.multiplyMatrices(mBody, mChain);
-  pools.capsules?.setMatrixAt(agentIndex, mPart);
+  pools.capsules?.setMatrixAt(slotIndex, mPart);
 }
 
 /** One rigid arm plus the hand sphere at its end. */
 function writeArm(
-  agentIndex: number,
+  slotIndex: number,
   rig: AgentRig,
   pose: AgentPose,
   left: boolean,
@@ -175,7 +194,7 @@ function writeArm(
   const armZ = left ? pose.armLeftZ : pose.armRightZ;
   const shoulderX = rig.torsoWidth / 2 + rig.armRadius + ARM_SPREAD;
   const shoulder = left ? -shoulderX : shoulderX;
-  const armIndex = ROBOT_COUNT + agentIndex * 2 + (left ? 0 : 1);
+  const armIndex = MAX_ROBOTS + slotIndex * 2 + (left ? 0 : 1);
 
   mLocal.makeTranslation(shoulder, rig.shoulderHeight, 0);
   mLocal.multiply(mChain.makeRotationX(armX));
@@ -196,24 +215,24 @@ function writeArm(
   mChain.makeScale(0.115, 0.115, 0.115);
   mPart.multiply(mChain);
   pools.accessories.jointSpheres?.setMatrixAt(
-    HAND_INDEX + agentIndex * 2 + (left ? 0 : 1),
+    HAND_INDEX + slotIndex * 2 + (left ? 0 : 1),
     mPart,
   );
 }
 
 function writeArms(
-  agentIndex: number,
+  slotIndex: number,
   rig: AgentRig,
   pose: AgentPose,
   pools: RobotPools,
 ): void {
-  writeArm(agentIndex, rig, pose, true, pools);
-  writeArm(agentIndex, rig, pose, false, pools);
+  writeArm(slotIndex, rig, pose, true, pools);
+  writeArm(slotIndex, rig, pose, false, pools);
 }
 
 /** One rigid leg plus the foot, both attached to the pelvis. */
 function writeLeg(
-  agentIndex: number,
+  slotIndex: number,
   rig: AgentRig,
   pose: AgentPose,
   left: boolean,
@@ -221,7 +240,7 @@ function writeLeg(
 ): void {
   const legX = left ? pose.legLeftX : pose.legRightX;
   const hip = left ? -LEG_SPREAD : LEG_SPREAD;
-  const legIndex = ROBOT_COUNT * 3 + agentIndex * 2 + (left ? 0 : 1);
+  const legIndex = MAX_ROBOTS * 3 + slotIndex * 2 + (left ? 0 : 1);
 
   mLocal.makeTranslation(hip, rig.hipHeight, 0);
   mLocal.multiply(mChain.makeRotationX(legX));
@@ -243,60 +262,60 @@ function writeLeg(
   mChain.makeScale(0.17, 0.09, 0.27);
   mPart.multiply(mChain);
   pools.accessories.jointBoxes?.setMatrixAt(
-    FOOT_INDEX + agentIndex * 2 + (left ? 0 : 1),
+    FOOT_INDEX + slotIndex * 2 + (left ? 0 : 1),
     mPart,
   );
 }
 
 function writeLegs(
-  agentIndex: number,
+  slotIndex: number,
   rig: AgentRig,
   pose: AgentPose,
   pools: RobotPools,
 ): void {
-  writeLeg(agentIndex, rig, pose, true, pools);
-  writeLeg(agentIndex, rig, pose, false, pools);
+  writeLeg(slotIndex, rig, pose, true, pools);
+  writeLeg(slotIndex, rig, pose, false, pools);
 }
 
 /** Head sphere in the neck-pivot frame. */
 function writeHead(
-  agentIndex: number,
+  slotIndex: number,
   rig: AgentRig,
   pools: RobotPools,
 ): void {
   scaledAt(mChain, 0, 0, 0, rig.headWidth, rig.headHeight, rig.headDepth);
   mPart.multiplyMatrices(mHead, mChain);
-  pools.heads?.setMatrixAt(agentIndex, mPart);
+  pools.heads?.setMatrixAt(slotIndex, mPart);
 }
 
 /** Role accessories, each parented to the head, body or pelvis. */
-function writeAccessories(agentIndex: number, pools: RobotPools): void {
-  const slots = ACCESSORY_LAYOUT.slots[agentIndex];
-  const locals = ACCESSORY_LOCAL_MATRICES[agentIndex];
-  for (let index = 0; index < slots.length; index += 1) {
-    const slot = slots[index];
+function writeAccessories(
+  slotIndex: number,
+  role: AgentRole,
+  pools: RobotPools,
+): void {
+  const entries = ROLE_ACCESSORIES[role];
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
     const parent =
-      slot.space === "head"
+      entry.space === "head"
         ? mHead
-        : slot.space === "body"
+        : entry.space === "body"
           ? mBody
           : mPelvis;
-    mPart.multiplyMatrices(parent, locals[index]);
-    pools.accessories[slot.pool]?.setMatrixAt(slot.index, mPart);
+    mPart.multiplyMatrices(parent, entry.matrix);
+    const instanceIndex =
+      slotIndex * ACCESSORY_SLOTS_PER_ROBOT[entry.pool] + entry.index;
+    pools.accessories[entry.pool]?.setMatrixAt(instanceIndex, mPart);
   }
 }
 
-/**
- * Emissive chest accent in the agent colour, one mesh per agent so the
- * shared accentMaterial pool can supply the right emissive per colour.
- */
+/** Emissive chest accent in the agent colour, one instance per slot. */
 function writeChestAccent(
-  agentIndex: number,
+  slotIndex: number,
   rig: AgentRig,
   pools: RobotPools,
 ): void {
-  const chest = pools.chests[agentIndex];
-  if (!chest) return;
   scaledAt(
     mChain,
     0,
@@ -307,7 +326,7 @@ function writeChestAccent(
     0.03,
   );
   mPart.multiplyMatrices(mBody, mChain);
-  mPart.decompose(chest.position, chest.quaternion, chest.scale);
+  pools.chests?.setMatrixAt(slotIndex, mPart);
 }
 
 /**
@@ -315,17 +334,20 @@ function writeChestAccent(
  * matrix so the ring writer can place floor decals without recomputing it.
  */
 export function writeRobotMatrices(
-  agentIndex: number,
+  slotIndex: number,
   pose: AgentPose,
   rig: AgentRig,
+  role: AgentRole,
   rootX: number,
   rootZ: number,
   heading: number,
+  visualScale: number,
   pools: RobotPools,
 ): THREE.Matrix4 {
   scratchQuaternion.setFromAxisAngle(UP, heading);
   scratchPosition.set(rootX, 0, rootZ);
-  scratchScale.set(rig.scale, rig.scale, rig.scale);
+  const drawn = rig.scale * Math.max(0.0001, visualScale);
+  scratchScale.set(drawn, drawn, drawn);
   mRoot.compose(scratchPosition, scratchQuaternion, scratchScale);
 
   // The pelvis bobs vertically only, and drops by exactly the amount the
@@ -351,19 +373,20 @@ export function writeRobotMatrices(
   mLocal.multiply(mChain.makeRotationFromEuler(scratchEuler));
   mHead.multiplyMatrices(mBody, mLocal);
 
-  writeTorso(agentIndex, rig, pools);
-  writeArms(agentIndex, rig, pose, pools);
-  writeLegs(agentIndex, rig, pose, pools);
-  writeHead(agentIndex, rig, pools);
-  writeAccessories(agentIndex, pools);
-  writeChestAccent(agentIndex, rig, pools);
+  writeTorso(slotIndex, rig, pools);
+  writeArms(slotIndex, rig, pose, pools);
+  writeLegs(slotIndex, rig, pose, pools);
+  writeHead(slotIndex, rig, pools);
+  writeAccessories(slotIndex, role, pools);
+  writeChestAccent(slotIndex, rig, pools);
 
   return mRoot;
 }
 
 /** Status, selection, pulse and contact-shadow floor decals. */
 export function writeRings(
-  agentIndex: number,
+  slotIndex: number,
+  color: THREE.Color,
   energy: number,
   highlighted: boolean,
   pulseActive: boolean,
@@ -372,17 +395,16 @@ export function writeRings(
   root: THREE.Matrix4,
   rings: RobotRings,
 ): void {
-  // The per-profile colours are parsed once at module load, never per frame.
-  scratchColor.copy(ROBOT_COLORS[agentIndex]).multiplyScalar(energy);
-  rings.status?.setColorAt(agentIndex, scratchColor);
+  scratchColor.copy(color).multiplyScalar(energy);
+  rings.status?.setColorAt(slotIndex, scratchColor);
   rings.status?.setMatrixAt(
-    agentIndex,
+    slotIndex,
     floorRing(mPart, root, STATUS_RING_Y, STATUS_RING_RADIUS),
   );
 
   const selectionRadius = highlighted ? SELECTION_RING_RADIUS : 0;
   rings.selection?.setMatrixAt(
-    agentIndex,
+    slotIndex,
     floorRing(mPart, root, SELECTION_RING_Y, selectionRadius),
   );
 
@@ -396,9 +418,9 @@ export function writeRings(
   } else {
     scratchColor.copy(PULSE_GREEN).multiplyScalar(1 - pulseProgress);
   }
-  rings.pulse?.setColorAt(agentIndex, scratchColor);
+  rings.pulse?.setColorAt(slotIndex, scratchColor);
   rings.pulse?.setMatrixAt(
-    agentIndex,
+    slotIndex,
     floorRing(mPart, root, PULSE_RING_Y, pulseRadius),
   );
 
@@ -406,9 +428,73 @@ export function writeRings(
   mLocal.multiply(mChain.makeRotationX(-Math.PI / 2));
   mLocal.multiply(mChain.makeScale(1.15, 0.82, 1));
   rings.shadows?.setMatrixAt(
-    agentIndex,
+    slotIndex,
     mPart.multiplyMatrices(root, mLocal),
   );
+}
+
+/** Chest and accent instance colours for the role occupying a slot. */
+export function setRobotColor(
+  slotIndex: number,
+  role: AgentRole,
+  color: THREE.Color,
+  pools: RobotPools,
+): void {
+  pools.chests?.setColorAt(slotIndex, color);
+  if (pools.chests?.instanceColor) {
+    pools.chests.instanceColor.needsUpdate = true;
+  }
+
+  const entries = ROLE_ACCESSORIES[role];
+  for (const entry of entries) {
+    const isAccent =
+      entry.pool === "accentBoxes" ||
+      entry.pool === "accentSpheres" ||
+      entry.pool === "accentRings";
+    if (!isAccent) continue;
+    const instanceIndex =
+      slotIndex * ACCESSORY_SLOTS_PER_ROBOT[entry.pool] + entry.index;
+    pools.accessories[entry.pool]?.setColorAt(instanceIndex, color);
+    const mesh = pools.accessories[entry.pool];
+    if (mesh?.instanceColor) mesh.instanceColor.needsUpdate = true;
+  }
+}
+
+/** Zero every instance belonging to a slot when its agent leaves. */
+export function clearRobotSlot(
+  slotIndex: number,
+  pools: RobotPools,
+  rings: RobotRings,
+): void {
+  pools.capsules?.setMatrixAt(slotIndex, zeroMatrix);
+  pools.capsules?.setMatrixAt(MAX_ROBOTS + slotIndex * 2, zeroMatrix);
+  pools.capsules?.setMatrixAt(MAX_ROBOTS + slotIndex * 2 + 1, zeroMatrix);
+  pools.capsules?.setMatrixAt(MAX_ROBOTS * 3 + slotIndex * 2, zeroMatrix);
+  pools.capsules?.setMatrixAt(MAX_ROBOTS * 3 + slotIndex * 2 + 1, zeroMatrix);
+  pools.heads?.setMatrixAt(slotIndex, zeroMatrix);
+  pools.chests?.setMatrixAt(slotIndex, zeroMatrix);
+  for (const pool of ACCESSORY_POOLS) {
+    const base = slotIndex * ACCESSORY_SLOTS_PER_ROBOT[pool];
+    const mesh = pools.accessories[pool];
+    for (let index = 0; index < ACCESSORY_SLOTS_PER_ROBOT[pool]; index += 1) {
+      mesh?.setMatrixAt(base + index, zeroMatrix);
+    }
+  }
+  pools.accessories.jointSpheres?.setMatrixAt(HAND_INDEX + slotIndex * 2, zeroMatrix);
+  pools.accessories.jointSpheres?.setMatrixAt(
+    HAND_INDEX + slotIndex * 2 + 1,
+    zeroMatrix,
+  );
+  pools.accessories.jointBoxes?.setMatrixAt(FOOT_INDEX + slotIndex * 2, zeroMatrix);
+  pools.accessories.jointBoxes?.setMatrixAt(
+    FOOT_INDEX + slotIndex * 2 + 1,
+    zeroMatrix,
+  );
+
+  rings.status?.setMatrixAt(slotIndex, zeroMatrix);
+  rings.selection?.setMatrixAt(slotIndex, zeroMatrix);
+  rings.pulse?.setMatrixAt(slotIndex, zeroMatrix);
+  rings.shadows?.setMatrixAt(slotIndex, zeroMatrix);
 }
 
 /** Project the speech-bubble anchor for one agent into screen space. */
@@ -417,16 +503,19 @@ export function writeLabelAnchor(
   x: number,
   z: number,
   rig: AgentRig,
+  visualScale: number,
   camera: THREE.Camera,
   width: number,
   height: number,
   anchor: LabelAnchor,
 ): void {
-  scratchLabel.set(x, rig.labelY * rig.scale, z);
+  const drawnScale = Math.max(0, visualScale);
+  scratchLabel.set(x, rig.labelY * rig.scale * drawnScale, z);
   const distance = scratchLabel.distanceTo(camera.position);
   scratchLabel.project(camera);
   anchor.scale = labelScale(CAMERA_FOV, distance);
   anchor.onScreen =
+    drawnScale > 0.4 &&
     scratchLabel.z > -1 &&
     scratchLabel.z < 1 &&
     Math.abs(scratchLabel.x) < 1.04 &&

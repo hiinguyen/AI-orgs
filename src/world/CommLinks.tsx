@@ -4,7 +4,7 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { AgentId } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { colorForAgent } from "@/agents/agentPalette";
 import type { CommLink } from "@/integrations/AgentBackend";
 import { liveWorld } from "@/state/useWorldStore";
 import { reducedMotion } from "@/state/reducedMotion";
@@ -54,14 +54,19 @@ const scratchColor = new THREE.Color();
 const scratchDummy = new THREE.Object3D();
 const zeroMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
 
-const AGENT_COLORS: Record<AgentId, THREE.Color> = {
-  orion: new THREE.Color(AGENT_BY_ID.orion.color),
-  iris: new THREE.Color(AGENT_BY_ID.iris.color),
-  piper: new THREE.Color(AGENT_BY_ID.piper.color),
-  kai: new THREE.Color(AGENT_BY_ID.kai.color),
-  quinn: new THREE.Color(AGENT_BY_ID.quinn.color),
-  rex: new THREE.Color(AGENT_BY_ID.rex.color),
-};
+const linkColors = new Map<string, THREE.Color>();
+
+/** One parsed colour per id; the live palette has twelve entries. */
+function linkColor(id: AgentId): THREE.Color {
+  // Keyed by the hex colour (6 core + 12 palette entries), never by id, so
+  // a long session of unique live ids cannot grow the map.
+  const hex = colorForAgent(id);
+  const existing = linkColors.get(hex);
+  if (existing) return existing;
+  const created = new THREE.Color(hex);
+  linkColors.set(hex, created);
+  return created;
+}
 
 /**
  * Normal blending, not additive: the two crossed strips cover the same
@@ -271,9 +276,10 @@ function writeRibbonSample(
 }
 
 /** Fill one slot's ribbon vertices from the two agents' current chest poses. */
-function writeRibbon(slot: LinkSlot, link: CommLink): void {
-  const from = agentVisuals[link.from];
-  const to = agentVisuals[link.to];
+function writeRibbon(slot: LinkSlot, link: CommLink): boolean {
+  const from = agentVisuals.get(link.from);
+  const to = agentVisuals.get(link.to);
+  if (!from || !to) return false;
   scratchA.set(from.x, from.chestY, from.z);
   scratchB.set(to.x, to.chestY, to.z);
   const distance = Math.hypot(
@@ -288,7 +294,7 @@ function writeRibbon(slot: LinkSlot, link: CommLink): void {
     (scratchA.z + scratchB.z) / 2,
   );
 
-  const sender = AGENT_COLORS[link.from];
+  const sender = linkColor(link.from);
   const width = link.kind === "assign" ? ASSIGN_RIBBON_WIDTH : RIBBON_WIDTH;
   const positionArray = slot.position.array as Float32Array;
   const colorArray = slot.color.array as Float32Array;
@@ -299,6 +305,7 @@ function writeRibbon(slot: LinkSlot, link: CommLink): void {
   slot.position.needsUpdate = true;
   slot.color.needsUpdate = true;
   slot.mesh.visible = true;
+  return true;
 }
 
 /** Launch the three packets along the ribbon for the current link progress. */
@@ -314,7 +321,7 @@ function writePackets(
     1,
     Math.max(0, (clock - link.startedAt) / duration),
   );
-  const sender = AGENT_COLORS[link.from];
+  const sender = linkColor(link.from);
   const size = link.kind === "assign" ? PACKET_SCALE * 1.25 : PACKET_SCALE;
 
   if (calm) {
@@ -406,7 +413,10 @@ export function CommLinks() {
         hideSlot(slot, slotIndex, packetMesh);
         continue;
       }
-      writeRibbon(slot, link);
+      if (!writeRibbon(slot, link)) {
+        hideSlot(slot, slotIndex, packetMesh);
+        continue;
+      }
       writePackets(packetMesh, slotIndex, link, clock.current.clock, calm);
     }
 

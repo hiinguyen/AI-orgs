@@ -1,4 +1,4 @@
-import { AGENT_BY_ID } from "../agents/AgentRegistry.ts";
+import { getAgentProfile } from "../agents/AgentRegistry.ts";
 import { isTerminalPhase, type Task } from "../tasks/taskTypes.ts";
 import { isActiveTask } from "../tasks/taskActions.ts";
 
@@ -84,7 +84,7 @@ function cardTint(task: Task, done: boolean): string {
   if (done) return DONE_CARD_TINT;
   if (task.phase === "failed") return FAILED_CARD_TINT;
   if (task.assignedAgentId === null) return PENDING_CARD_TINT;
-  return AGENT_BY_ID[task.assignedAgentId].color;
+  return getAgentProfile(task.assignedAgentId).color;
 }
 
 /** Completion time of a terminal task, falling back for older snapshots. */

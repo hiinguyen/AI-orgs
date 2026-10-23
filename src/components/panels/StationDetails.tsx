@@ -1,7 +1,7 @@
 "use client";
 
 import { Crosshair, UserRound } from "lucide-react";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import { LOCATIONS, STATIONS, type StationId } from "@/simulation/worldLayout";
 import { useWorldStore } from "@/state/useWorldStore";
 import { STATION_OWNER_IDS } from "@/world/stationOwners";
@@ -47,7 +47,7 @@ export function StationDetails({ stationId }: { stationId: StationId }) {
     );
   }
 
-  const owner = AGENT_BY_ID[STATION_OWNER_IDS[stationId]];
+  const owner = getAgentProfile(STATION_OWNER_IDS[stationId]);
   const zone = LOCATIONS[stationId]?.zone;
 
   return (

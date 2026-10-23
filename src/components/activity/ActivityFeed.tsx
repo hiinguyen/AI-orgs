@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { ArrowRight } from "lucide-react";
 import type { AgentId } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import type { AgentEvent } from "@/events/eventTypes";
 import {
   AgentAvatar,
@@ -49,9 +49,9 @@ function ActivityRow({
   onJump?: (agentId: AgentId) => void;
 }) {
   const primary = event.agentId ?? event.targetAgentId;
-  const sender = event.agentId ? AGENT_BY_ID[event.agentId] : null;
+  const sender = event.agentId ? getAgentProfile(event.agentId) : null;
   const target = event.targetAgentId
-    ? AGENT_BY_ID[event.targetAgentId]
+    ? getAgentProfile(event.targetAgentId)
     : null;
 
   const content = (
@@ -127,7 +127,7 @@ function ActivityRow({
         type="button"
         className={classes}
         onClick={() => onJump(primary)}
-        aria-label={`${event.message} - open ${AGENT_BY_ID[primary].name}`}
+        aria-label={`${event.message} - open ${getAgentProfile(primary).name}`}
       >
         {content}
       </button>

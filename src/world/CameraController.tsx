@@ -154,8 +154,11 @@ function followStep(
   followId: AgentId,
   delta: number,
   calm: boolean,
-): void {
-  const visual = agentVisuals[followId];
+): boolean {
+  // Read-only lookup: a followed agent that despawned has no pose any more,
+  // and recreating one here would leak it. The caller clears follow mode.
+  const visual = agentVisuals.get(followId);
+  if (!visual) return false;
   scratchTarget.set(visual.x, 1, visual.z);
   const previousX = controls.target.x;
   const previousY = controls.target.y;
@@ -192,6 +195,7 @@ function followStep(
   camera.position.x += controls.target.x - previousX;
   camera.position.y += controls.target.y - previousY;
   camera.position.z += controls.target.z - previousZ;
+  return true;
 }
 
 /** Damp the orbit target and camera position towards an active move goal. */
@@ -385,7 +389,9 @@ export function CameraController() {
     // A focus request that arrived with the follow toggle flies the camera in
     // first; once it settles, the follow branch keeps the resulting offset.
     if (followId !== null && !goal.current.active) {
-      followStep(controls, state.camera, followId, delta, calm);
+      if (!followStep(controls, state.camera, followId, delta, calm)) {
+        store.setFollowAgent(null);
+      }
     } else if (goal.current.active) {
       goalStep(controls, state.camera, goal.current, delta, calm);
     }

@@ -1,4 +1,4 @@
-import type { AgentId, AgentState } from "../agents/agentTypes.ts";
+import type { AgentId, AgentProfile, AgentState } from "../agents/agentTypes.ts";
 import type { AgentEvent } from "../events/eventTypes.ts";
 import type { CreateTaskInput, Task } from "../tasks/taskTypes.ts";
 
@@ -19,6 +19,8 @@ export interface WorldSnapshot {
   clock: number;
   status: SimulationStatus;
   speed: number;
+  /** Who exists right now. Any backend may announce core and live agents. */
+  profiles: AgentProfile[];
   agents: AgentState[];
   tasks: Task[];
   links: CommLink[];

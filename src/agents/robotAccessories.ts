@@ -1,5 +1,6 @@
+import type { AgentRole } from "./agentTypes.ts";
 import type { AgentRig } from "./agentRigs.ts";
-import { ARM_SPREAD, LEG_SPREAD } from "./agentRigs.ts";
+import { AGENT_RIGS, ARM_SPREAD, LEG_SPREAD } from "./agentRigs.ts";
 
 /**
  * Static accessory layout for the procedural robots: neck, belt, joints,
@@ -276,3 +277,71 @@ export function buildAccessoryLayout(
   );
   return { slots, counts: cursors };
 }
+
+export interface RoleAccessorySlot extends AccessorySpec {
+  /** Index inside that pool's per-robot block. */
+  localIndex: number;
+}
+
+export interface RoleAccessoryLayout {
+  slots: RoleAccessorySlot[];
+  /** Highest local index + 1 for each pool for this role. */
+  localCounts: Record<AccessoryPool, number>;
+}
+
+const ROLES: readonly AgentRole[] = [
+  "orchestrator",
+  "researcher",
+  "product_manager",
+  "engineer",
+  "qa",
+  "reviewer",
+];
+
+/** Accessory layout per role, compiled once: no per-frame layout work. */
+export const ROLE_ACCESSORY_LAYOUT: Readonly<
+  Record<AgentRole, RoleAccessoryLayout>
+> = (() => {
+  const layouts = {} as Record<AgentRole, RoleAccessoryLayout>;
+  for (const role of ROLES) {
+    const cursors: Record<AccessoryPool, number> = {
+      accentBoxes: 0,
+      jointBoxes: 0,
+      jointCylinders: 0,
+      jointSpheres: 0,
+      accentSpheres: 0,
+      accentRings: 0,
+    };
+    const slots = roleAccessories(AGENT_RIGS[role]).map((spec) => {
+      const localIndex = cursors[spec.pool];
+      cursors[spec.pool] += 1;
+      return { ...spec, localIndex };
+    });
+    layouts[role] = { slots, localCounts: cursors };
+  }
+  return layouts;
+})();
+
+/**
+ * Accessory pools are allocated as a fixed block per robot slot. A block is
+ * sized by the widest role, so a slot can host any role (and switch role when
+ * an agent respawns) without rebuilding instance buffers.
+ */
+export const ACCESSORY_SLOTS_PER_ROBOT: Readonly<Record<AccessoryPool, number>> =
+  (() => {
+    const counts: Record<AccessoryPool, number> = {
+      accentBoxes: 0,
+      jointBoxes: 0,
+      jointCylinders: 0,
+      jointSpheres: 0,
+      accentSpheres: 0,
+      accentRings: 0,
+    };
+    for (const role of ROLES) {
+      const layout = ROLE_ACCESSORY_LAYOUT[role];
+      for (const pool of ACCESSORY_POOLS) {
+        counts[pool] = Math.max(counts[pool], layout.localCounts[pool]);
+      }
+    }
+    return counts;
+  })();

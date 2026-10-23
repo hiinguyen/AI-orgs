@@ -4,7 +4,7 @@ import { useLayoutEffect, useRef, type JSX, type RefObject } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { AgentId, AgentState } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import { STATIONS, type StationId } from "@/simulation/worldLayout";
 import { liveWorld } from "@/state/useWorldStore";
 import { reducedMotion } from "@/state/reducedMotion";
@@ -155,7 +155,7 @@ function writeDeskMatrices(
     dummy.scale.set(2.48, 0.026, 0.012);
     dummy.updateMatrix();
     meshes.strips?.setMatrixAt(index, dummy.matrix);
-    color.set(AGENT_BY_ID[STATION_OWNER_IDS[station.id]].color);
+    color.set(getAgentProfile(STATION_OWNER_IDS[station.id]).color);
     meshes.strips?.setColorAt(index, color);
 
     dummy.position.set(x, 0.014, z + 0.4);
@@ -264,7 +264,7 @@ function useScreenEntries(): RefObject<ScreenEntry[] | null> {
       return {
         material: screenMaterial(station.id),
         ownerId,
-        color: new THREE.Color(AGENT_BY_ID[ownerId].color),
+        color: new THREE.Color(getAgentProfile(ownerId).color),
         poolLevel: 0.1,
       };
     });

@@ -18,6 +18,7 @@ import { runAgentsSuite } from "./tests/agents.ts";
 import { runReducedMotionSuite } from "./tests/motion.ts";
 import { runQualitySuite } from "./tests/quality.ts";
 import { runSoundSuite } from "./tests/sound.ts";
+import { runLiveAgentsSuite } from "./tests/liveAgents.ts";
 import { runMirrorSuite } from "./tests/store.ts";
 import { runLifecycleSuite, runStateMachineSuite } from "./tests/workflow.ts";
 import type { TestReporter } from "./tests/harness.ts";
@@ -55,6 +56,7 @@ async function main(): Promise<void> {
   runReducedMotionSuite(reporter);
   await runSoundSuite(reporter);
   await runBackendSuite(reporter);
+  await runLiveAgentsSuite(reporter);
 
   console.log("");
   if (failures === 0) {

@@ -8,7 +8,7 @@ import {
   LocateFixed,
   PauseCircle,
 } from "lucide-react";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import { PHASE_LABELS } from "@/tasks/taskTypes";
 import { useWorldStore } from "@/state/useWorldStore";
 import {
@@ -30,6 +30,7 @@ export function TaskDetails({ taskId }: { taskId: string }) {
     state.world?.tasks.find((entry) => entry.id === taskId),
   );
   const focusAgent = useWorldStore((state) => state.focusAgent);
+  const simulated = useWorldStore((state) => state.backend.simulated);
 
   if (!task) {
     return (
@@ -42,7 +43,7 @@ export function TaskDetails({ taskId }: { taskId: string }) {
   }
 
   const owner = task.assignedAgentId
-    ? AGENT_BY_ID[task.assignedAgentId]
+    ? getAgentProfile(task.assignedAgentId)
     : null;
   const rows = workflowRows(task);
   const progressColor = taskProgressColor(task);
@@ -122,7 +123,7 @@ export function TaskDetails({ taskId }: { taskId: string }) {
       <p className="eyebrow">Workflow</p>
       <ol className="mt-1.5 space-y-0.5">
         {rows.map((row) => {
-          const rowOwner = row.ownerId ? AGENT_BY_ID[row.ownerId] : null;
+          const rowOwner = row.ownerId ? getAgentProfile(row.ownerId) : null;
           const active = row.state === "current" || row.state === "failed";
           return (
             <li
@@ -276,7 +277,9 @@ export function TaskDetails({ taskId }: { taskId: string }) {
       )}
 
       <p className="mt-4 border-t border-white/[0.06] pt-2.5 text-[9.5px] leading-4 text-mist-500">
-        Simulated output from canned templates - no model inference.
+        {simulated
+          ? "Simulated output from canned templates - no model inference."
+          : "Details reported by the connected service."}
       </p>
     </div>
   );

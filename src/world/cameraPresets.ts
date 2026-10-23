@@ -10,8 +10,8 @@ export interface CameraPreset {
 /** The five camera presets from the spec, in metres and radians-free. */
 export const CAMERA_PRESETS: Record<CameraPresetId, CameraPreset> = {
   overview: {
-    position: [-1.2, 20, 25],
-    target: [-1.2, 0, 0.8],
+    position: [-1.2, 20, 25.8],
+    target: [-1.2, 0, 1.6],
   },
   hub: {
     position: [0.6, 7.2, 9.6],
@@ -41,7 +41,7 @@ export const CAMERA_LIMITS = {
   targetMinX: -14,
   targetMaxX: 14,
   targetMinZ: -8,
-  targetMaxZ: 10,
+  targetMaxZ: 11.5,
   targetMinY: 0,
   targetMaxY: 3,
 } as const;

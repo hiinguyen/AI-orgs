@@ -4,8 +4,7 @@ import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import type { ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
-import type { AgentId } from "@/agents/agentTypes";
-import { AGENT_IDS } from "@/agents/agentTypes";
+import type { AgentId, AgentState } from "@/agents/agentTypes";
 import { useWorldStore } from "@/state/useWorldStore";
 import { STATIONS, type StationId } from "@/simulation/worldLayout";
 import { agentVisuals } from "./agentVisuals";
@@ -35,15 +34,15 @@ export function InteractionManager() {
   const gl = useThree((state) => state.gl);
   const hovered = useWorldStore((state) => state.hovered);
   const selectedStationId = useWorldStore((state) => state.selectedStationId);
-  const agentHitRefs = useRef<Array<THREE.Mesh | null>>([]);
+  const agents = useWorldStore((state) => state.world?.agents);
+  const agentHitRefs = useRef<Map<AgentId, THREE.Mesh>>(new Map());
 
   // The invisible agent cylinders follow the damped visual pose, so a click
   // lands where the robot is drawn rather than where the snapshot already is.
   useFrame(() => {
-    for (let index = 0; index < AGENT_IDS.length; index += 1) {
-      const mesh = agentHitRefs.current[index];
-      if (!mesh) continue;
-      const visual = agentVisuals[AGENT_IDS[index]];
+    for (const [id, mesh] of agentHitRefs.current) {
+      const visual = agentVisuals.get(id);
+      if (!visual) continue;
       mesh.position.set(visual.x, 1.02, visual.z);
       mesh.rotation.y = visual.heading;
     }
@@ -150,20 +149,21 @@ export function InteractionManager() {
         />
       ))}
 
-      {AGENT_IDS.map((id, index) => (
+      {agents?.map((agent: AgentState) => (
         <mesh
-          key={id}
+          key={agent.id}
           ref={(node) => {
-            agentHitRefs.current[index] = node;
+            if (node) agentHitRefs.current.set(agent.id, node);
+            else agentHitRefs.current.delete(agent.id);
           }}
-          name={`agent-hit-${id}`}
+          name={`agent-hit-${agent.id}`}
           geometry={geometries.cylinder}
           scale={[0.9, 2.05, 0.9]}
-          position={[agentVisuals[id].x, 1.02, agentVisuals[id].z]}
+          position={[agent.position.x, 1.02, agent.position.z]}
           visible={false}
-          onPointerOver={enteredAgent(id)}
-          onPointerOut={leftAgent(id)}
-          onClick={clickedAgent(id)}
+          onPointerOver={enteredAgent(agent.id)}
+          onPointerOut={leftAgent(agent.id)}
+          onClick={clickedAgent(agent.id)}
         />
       ))}
 
