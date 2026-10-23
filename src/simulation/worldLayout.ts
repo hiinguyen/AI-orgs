@@ -41,6 +41,8 @@ export interface WorldLocation {
 
 export const HUB_CENTER: Vec2 = { x: 0, z: -0.6 };
 export const MISSION_CONTROL: Vec2 = { x: 0, z: -7.4 };
+/** Angled whiteboard in the collaboration corner, clear of the walking corridor. */
+export const PLANNING_BOARD_CENTER: Vec2 = { x: -10.8, z: 5.1 };
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
@@ -115,10 +117,10 @@ export const LOCATIONS: Record<LocationId, WorldLocation> = {
     id: "planning",
     label: "Planning Board",
     slots: [
-      { x: -11.4, z: 4.2 },
-      { x: -11, z: 5.6 },
+      { x: -9.14, z: 5.06 },
+      { x: -10.08, z: 6.6 },
     ],
-    facing: -Math.PI / 2,
+    facing: -2.15,
     zone: "collaboration",
   },
   collab: {

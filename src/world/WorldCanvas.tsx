@@ -36,6 +36,7 @@ declare global {
         status: string;
         activity: string;
         paused: boolean;
+        currentTaskId: string | null;
       }>;
       tasks: Array<{
         id: string;
@@ -44,6 +45,7 @@ declare global {
         status: string;
         iteration: number;
         progress: number;
+        subtasks: Array<{ id: string; title: string; done: boolean }>;
       }>;
       camera: { x: number; y: number; z: number };
       ui: {
@@ -128,6 +130,7 @@ function RenderStatsProbe() {
           status: agent.status,
           activity: agent.activity,
           paused: agent.paused,
+          currentTaskId: agent.currentTaskId,
         })),
         tasks: snapshot.tasks.map((task) => ({
           id: task.id,
@@ -136,6 +139,11 @@ function RenderStatsProbe() {
           status: task.status,
           iteration: task.iteration,
           progress: task.progress,
+          subtasks: task.subtasks.map((subtask) => ({
+            id: subtask.id,
+            title: subtask.title,
+            done: subtask.done,
+          })),
         })),
         camera: {
           x: camera.position.x,
@@ -192,7 +200,11 @@ export function WorldCanvas() {
           flipflops={2}
           onFallback={() => {
             const store = useWorldStore.getState();
-            if (store.quality !== "low") setQuality("low", true);
+            // A forced ?quality=high or ?quality=low must not be overridden
+            // by the performance monitor.
+            if (store.qualityAuto && store.quality !== "low") {
+              setQuality("low", true);
+            }
           }}
         />
         <ReadySignal />
