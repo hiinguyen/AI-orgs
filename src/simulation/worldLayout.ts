@@ -21,7 +21,8 @@ export type LocationId =
   | "review"
   | "planning"
   | "collab"
-  | "lounge";
+  | "lounge"
+  | "dispatch";
 
 export type ZoneId =
   | "operations"
@@ -62,6 +63,43 @@ function ring(center: Vec2, radius: number, count = 6): Vec2[] {
 
 const COLLAB_CENTER: Vec2 = { x: -5, z: 5.6 };
 const LOUNGE_CENTER: Vec2 = { x: 7.5, z: 6.2 };
+
+/**
+ * Dispatch Floor bays. Four columns by three rows in the open foreground
+ * between the collaboration ring and the lounge, clear of both rings, the
+ * corridor at z 2.8, the planning board, every core desk and the side walls.
+ *
+ * Bay cells are compact: a stand slot with a 0.9 m deep desk in front of it
+ * (towards -z, matching the core stations' facing).
+ */
+export const BAY_COUNT = 12;
+export const BAY_COLUMNS = 4;
+const BAY_FIRST_X = -1.2;
+const BAY_FIRST_Z = 8.0;
+const BAY_PITCH_X = 1.8;
+const BAY_PITCH_Z = 1.5;
+const BAY_DESK_OFFSET_Z = 0.8;
+
+function buildBayStands(): Vec2[] {
+  const stands: Vec2[] = [];
+  for (let row = 0; row < BAY_COUNT / BAY_COLUMNS; row += 1) {
+    for (let column = 0; column < BAY_COLUMNS; column += 1) {
+      stands.push({
+        x: round(BAY_FIRST_X + column * BAY_PITCH_X),
+        z: round(BAY_FIRST_Z + row * BAY_PITCH_Z),
+      });
+    }
+  }
+  return stands;
+}
+
+export const BAY_STANDS: readonly Vec2[] = buildBayStands();
+export const BAY_DESKS: readonly Vec2[] = BAY_STANDS.map((stand) => ({
+  x: stand.x,
+  z: round(stand.z - BAY_DESK_OFFSET_Z),
+}));
+export const BAY_DESK_DEPTH = 0.55;
+export const BAY_DESK_WIDTH = 1.0;
 
 export const LOCATIONS: Record<LocationId, WorldLocation> = {
   hub: {
@@ -139,6 +177,13 @@ export const LOCATIONS: Record<LocationId, WorldLocation> = {
     center: LOUNGE_CENTER,
     zone: "collaboration",
   },
+  dispatch: {
+    id: "dispatch",
+    label: "Dispatch Floor",
+    slots: BAY_STANDS,
+    facing: Math.PI,
+    zone: "operations",
+  },
 };
 
 export const LOCATION_IDS: readonly LocationId[] = [
@@ -152,6 +197,7 @@ export const LOCATION_IDS: readonly LocationId[] = [
   "planning",
   "collab",
   "lounge",
+  "dispatch",
 ];
 
 export function isLocationId(value: string): value is LocationId {

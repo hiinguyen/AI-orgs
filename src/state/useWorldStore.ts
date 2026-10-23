@@ -1,6 +1,9 @@
 import { create } from "zustand";
-import type { AgentId, AgentState } from "../agents/agentTypes.ts";
+import type { AgentId, AgentProfile, AgentState } from "../agents/agentTypes.ts";
+import { CORE_AGENT_IDS, MAX_LIVE_AGENTS } from "../agents/agentTypes.ts";
+import { CORE_AGENTS, getAgentProfile, setAnnouncedProfiles } from "../agents/AgentRegistry.ts";
 import type { LocationId } from "../simulation/worldLayout.ts";
+import { BAY_COUNT } from "../simulation/worldLayout.ts";
 import { SIMULATION_CONFIG } from "../simulation/simulationConfig.ts";
 import type {
   SimulationStatus,
@@ -65,11 +68,62 @@ export interface OverlaySettings {
   speechIndicators: boolean;
 }
 
+/** One agent that left the world, kept for the panel's Finished group. */
+export interface FinishedAgent {
+  id: AgentId;
+  name: string;
+  roleLabel: string;
+  outcome: "success" | "error";
+  /** Simulated lifetime in seconds when the backend reports one. */
+  duration: number;
+  finishedAt: number;
+}
+
+/**
+ * Agent profiles keyed by id. A Map, because ids come from an untrusted
+ * backend and "__proto__" or "constructor" must stay plain keys.
+ */
+export type AgentProfiles = ReadonlyMap<AgentId, AgentProfile>;
+
+function coreProfilesMap(): Map<AgentId, AgentProfile> {
+  return new Map(CORE_AGENTS.map((profile) => [profile.id, profile]));
+}
+
+/** Total profile lookup for UI code, never undefined. */
+export function profileFor(
+  profiles: AgentProfiles,
+  id: AgentId,
+): AgentProfile {
+  return profiles.get(id) ?? getAgentProfile(id);
+}
+
+/**
+ * Live agents without a bay. The backend owns bay allocation; a full floor
+ * of 16 therefore reads as twelve bays plus four waiting, as the brief names.
+ */
+export function waitingAgentCount(snapshot: WorldSnapshot | null): number {
+  if (snapshot === null) return 0;
+  let live = 0;
+  for (const agent of snapshot.agents) {
+    if (getAgentProfile(agent.id).kind === "live") live += 1;
+  }
+  return Math.max(0, live - BAY_COUNT);
+}
+
+const FINISHED_LIMIT = 8;
+
 export interface WorldStore {
   // React mirror of the backend snapshot, updated at most every 160 ms.
   world: WorldSnapshot | null;
   simStatus: SimulationStatus;
   speed: number;
+
+  /** Profiles of every announced agent, core plus live, keyed by id. */
+  profiles: AgentProfiles;
+  /** Live agents in spawn order, newest last, for the Agents panel. */
+  liveAgentOrder: AgentId[];
+  /** The last eight live agents that finished and left the world. */
+  finishedAgents: FinishedAgent[];
 
   events: AgentEvent[];
 
@@ -160,6 +214,10 @@ export const useWorldStore = create<WorldStore>()((set) => {
     world: null,
     simStatus: "ready",
     speed: SIMULATION_CONFIG.defaultSpeed,
+
+    profiles: coreProfilesMap(),
+    liveAgentOrder: [],
+    finishedAgents: [],
 
     events: [],
 
@@ -316,15 +374,85 @@ export const useWorldStore = create<WorldStore>()((set) => {
 
     applySnapshot: (snapshot) => {
       liveWorld.current = snapshot;
+      const profilesChanged = setAnnouncedProfiles(snapshot.profiles);
+
+      const liveIds: AgentId[] = [];
+      for (const agent of snapshot.agents) {
+        if (getAgentProfile(agent.id).kind === "live") liveIds.push(agent.id);
+      }
+      const present = new Set(liveIds);
+
+      const state = useWorldStore.getState();
+      const nextOrder = state.liveAgentOrder.filter((id) => present.has(id));
+      for (const id of liveIds) {
+        if (!nextOrder.includes(id)) nextOrder.push(id);
+      }
+      const orderChanged =
+        nextOrder.length !== state.liveAgentOrder.length ||
+        nextOrder.some((id, index) => id !== state.liveAgentOrder[index]);
+
+      if (profilesChanged) {
+        const profiles = coreProfilesMap();
+        for (const profile of snapshot.profiles) {
+          if (profile.kind === "live" && !CORE_AGENT_IDS.includes(profile.id)) {
+            profiles.set(profile.id, profile);
+          }
+        }
+        set({ profiles, liveAgentOrder: nextOrder });
+      } else if (orderChanged) {
+        set({ liveAgentOrder: nextOrder });
+      }
+
       mirror.apply(snapshot);
     },
 
     applyEvent: (event) =>
-      set((state) => ({
-        events: appendEvent(
-          event.type === "system.reset" ? [] : state.events,
-          event,
-        ),
-      })),
+      set((state) => {
+        let finishedAgents = state.finishedAgents;
+        let liveAgentOrder = state.liveAgentOrder;
+
+        if (event.type === "system.reset") {
+          finishedAgents = [];
+          liveAgentOrder = [];
+        } else if (event.type === "agent.spawned" && event.agentId) {
+          const profile = profileFor(state.profiles, event.agentId);
+          if (
+            profile.kind === "live" &&
+            liveAgentOrder.length < MAX_LIVE_AGENTS &&
+            !liveAgentOrder.includes(event.agentId)
+          ) {
+            liveAgentOrder = [...liveAgentOrder, event.agentId];
+          }
+        } else if (event.type === "agent.despawned" && event.agentId) {
+          const profile = profileFor(state.profiles, event.agentId);
+          const rawOutcome = event.metadata?.outcome;
+          const outcome: FinishedAgent["outcome"] =
+            rawOutcome === "error" ? "error" : "success";
+          const rawDuration = event.metadata?.duration;
+          const duration =
+            typeof rawDuration === "number" && Number.isFinite(rawDuration)
+              ? Math.max(0, rawDuration)
+              : 0;
+          const finished: FinishedAgent = {
+            id: event.agentId,
+            name: profile.name,
+            roleLabel: profile.roleLabel,
+            outcome,
+            duration,
+            finishedAt: event.timestamp,
+          };
+          finishedAgents = [finished, ...finishedAgents].slice(0, FINISHED_LIMIT);
+          liveAgentOrder = liveAgentOrder.filter((id) => id !== event.agentId);
+        }
+
+        return {
+          events: appendEvent(
+            event.type === "system.reset" ? [] : state.events,
+            event,
+          ),
+          finishedAgents,
+          liveAgentOrder,
+        };
+      }),
   };
 });

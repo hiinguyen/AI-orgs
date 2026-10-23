@@ -4,7 +4,7 @@
  * that the 3D components consume.
  */
 import type { AgentId, AgentState, AgentStatus } from "../../src/agents/agentTypes.ts";
-import { AGENT_BY_ID } from "../../src/agents/AgentRegistry.ts";
+import { getAgentProfile, CORE_AGENTS } from "../../src/agents/AgentRegistry.ts";
 import { TICK_SECONDS } from "../../src/simulation/simulationConfig.ts";
 import type { WorldSnapshot } from "../../src/integrations/AgentBackend.ts";
 import { DEMO_TASK } from "../../src/tasks/taskActions.ts";
@@ -100,7 +100,15 @@ function makeAgent(id: AgentId, status: AgentStatus): AgentState {
 }
 
 function snapshotWith(tasks: Task[], agents: AgentState[] = []): WorldSnapshot {
-  return { clock: 0, status: "running", speed: 1, agents, tasks, links: [] };
+  return {
+    clock: 0,
+    status: "running",
+    speed: 1,
+    profiles: CORE_AGENTS.map((profile) => ({ ...profile })),
+    agents,
+    tasks,
+    links: [],
+  };
 }
 
 function runCountsChecks(reporter: TestReporter): void {
@@ -161,7 +169,7 @@ function runActiveTaskChecks(reporter: TestReporter): void {
   );
   check(
     "row colour comes from the assigned agent",
-    rows.find((row) => row.id === "T-2")?.color === AGENT_BY_ID.quinn.color,
+    rows.find((row) => row.id === "T-2")?.color === getAgentProfile("quinn").color,
   );
   check(
     "the wall shows at most four tasks",
@@ -218,7 +226,7 @@ function runSignatureChecks(reporter: TestReporter): void {
   check(
     "the roster is always six agents",
     base.agents.length === 6 &&
-      base.agents.every((entry) => entry.name === AGENT_BY_ID[entry.id].name),
+      base.agents.every((entry) => entry.name === getAgentProfile(entry.id).name),
   );
 }
 
@@ -241,8 +249,8 @@ function runPlanningChecks(reporter: TestReporter): void {
   );
   check(
     "pending cards use the assigned agent colour",
-    cards[0].tint === AGENT_BY_ID.piper.color &&
-      cards[3].tint === AGENT_BY_ID.kai.color,
+    cards[0].tint === getAgentProfile("piper").color &&
+      cards[3].tint === getAgentProfile("kai").color,
   );
 
   const withDone = planningCards([
@@ -258,7 +266,7 @@ function runPlanningChecks(reporter: TestReporter): void {
   check(
     "done cards use the muted green tint",
     withDone[0].tint === DONE_CARD_TINT &&
-      withDone[1].tint === AGENT_BY_ID.piper.color,
+      withDone[1].tint === getAgentProfile("piper").color,
   );
   check(
     "ticking a subtask changes the planning signature",

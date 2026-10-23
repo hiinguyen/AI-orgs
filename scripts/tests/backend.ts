@@ -118,35 +118,41 @@ export async function runBackendSuite(reporter: TestReporter): Promise<void> {
     parseWorldSnapshot(snapshot) !== null,
   );
   check(
-    "a snapshot with an unknown agent status is rejected",
-    parseWorldSnapshot({
-      ...snapshot,
-      agents: snapshot.agents.map((agent, index) =>
-        index === 0 ? { ...agent, status: "dancing" } : agent,
-      ),
-    }) === null,
+    "an unknown agent status drops that agent, not the snapshot",
+    (() => {
+      const parsed = parseWorldSnapshot({
+        ...snapshot,
+        agents: snapshot.agents.map((agent, index) =>
+          index === 0 ? { ...agent, status: "dancing" } : agent,
+        ),
+      });
+      return parsed !== null && parsed.agents.length === snapshot.agents.length - 1;
+    })(),
   );
   check(
-    "a snapshot with an unknown task priority is rejected",
-    parseWorldSnapshot({
-      ...snapshot,
-      tasks: snapshot.tasks.map((task, index) =>
-        index === 0 ? { ...task, priority: "urgent" } : task,
-      ),
-    }) === null,
+    "an unknown task priority drops that task, not the snapshot",
+    (() => {
+      const parsed = parseWorldSnapshot({
+        ...snapshot,
+        tasks: snapshot.tasks.map((task, index) =>
+          index === 0 ? { ...task, priority: "urgent" } : task,
+        ),
+      });
+      return parsed !== null && parsed.tasks.length === 0;
+    })(),
   );
   check(
-    "a snapshot with duplicate agent ids is rejected",
+    "a snapshot with duplicate agent ids ignores the duplicate",
     parseWorldSnapshot({
       ...snapshot,
       agents: [snapshot.agents[0], snapshot.agents[0]],
-    }) === null,
+    })?.agents.length === 1,
   );
   check(
-    "a snapshot with too many agents is rejected",
+    "a snapshot with more raw agent entries than the cap is rejected",
     parseWorldSnapshot({
       ...snapshot,
-      agents: Array.from({ length: MAX_AGENTS + 1 }, () => snapshot.agents[0]),
+      agents: Array.from({ length: MAX_AGENTS * 4 + 1 }, () => snapshot.agents[0]),
     }) === null,
   );
   check(
@@ -171,42 +177,48 @@ export async function runBackendSuite(reporter: TestReporter): Promise<void> {
     }) === null,
   );
   check(
-    "an agent path longer than 256 points is rejected",
-    parseWorldSnapshot({
-      ...snapshot,
-      agents: snapshot.agents.map((agent, index) =>
-        index === 0
-          ? {
-              ...agent,
-              path: Array.from({ length: MAX_PATH_POINTS + 1 }, () => ({
-                x: 0,
-                z: 0,
-              })),
-            }
-          : agent,
-      ),
-    }) === null,
+    "an agent path longer than 256 points drops that agent",
+    (() => {
+      const parsed = parseWorldSnapshot({
+        ...snapshot,
+        agents: snapshot.agents.map((agent, index) =>
+          index === 0
+            ? {
+                ...agent,
+                path: Array.from({ length: MAX_PATH_POINTS + 1 }, () => ({
+                  x: 0,
+                  z: 0,
+                })),
+              }
+            : agent,
+        ),
+      });
+      return parsed !== null && parsed.agents.length === snapshot.agents.length - 1;
+    })(),
   );
   check(
-    "a task with more than 100 subtasks is rejected",
-    parseWorldSnapshot({
-      ...snapshot,
-      tasks: snapshot.tasks.map((task, index) =>
-        index === 0
-          ? {
-              ...task,
-              subtasks: Array.from(
-                { length: MAX_TASK_COLLECTION + 1 },
-                (_, subtaskIndex) => ({
-                  id: `s-${subtaskIndex}`,
-                  title: "probe",
-                  done: false,
-                }),
-              ),
-            }
-          : task,
-      ),
-    }) === null,
+    "a task with more than 100 subtasks drops that task",
+    (() => {
+      const parsed = parseWorldSnapshot({
+        ...snapshot,
+        tasks: snapshot.tasks.map((task, index) =>
+          index === 0
+            ? {
+                ...task,
+                subtasks: Array.from(
+                  { length: MAX_TASK_COLLECTION + 1 },
+                  (_, subtaskIndex) => ({
+                    id: `s-${subtaskIndex}`,
+                    title: "probe",
+                    done: false,
+                  }),
+                ),
+              }
+            : task,
+        ),
+      });
+      return parsed !== null && parsed.tasks.length === 0;
+    })(),
   );
   check(
     "an oversized message is rejected before JSON.parse",
@@ -278,7 +290,7 @@ export async function runBackendSuite(reporter: TestReporter): Promise<void> {
     }
     check(
       "malformed and oversized messages warn once each and leave state untouched",
-      warnings === 4 &&
+      warnings === 3 &&
         backend.getSnapshot()?.clock === snapshot.clock &&
         seenEvents.length === 1,
       `${warnings} warnings`,

@@ -1,9 +1,18 @@
 "use client";
 
-import { useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import type { AgentId, AgentState, AgentStatus } from "@/agents/agentTypes";
+import type {
+  AgentId,
+  AgentProfile,
+  AgentRole,
+  AgentState,
+  AgentStatus,
+} from "@/agents/agentTypes";
+import { CORE_AGENT_IDS, MAX_AGENTS } from "@/agents/agentTypes";
+import { getAgentProfile } from "@/agents/AgentRegistry";
+import { colorForAgent } from "@/agents/agentPalette";
 import { AgentAnimator } from "@/agents/AgentAnimator";
 import {
   HEADING_LAMBDA,
@@ -13,37 +22,36 @@ import {
   dampValue,
   isTeleport,
 } from "@/agents/agentMath";
-import { animatorInputsFor, chestHeight } from "@/agents/agentRigs";
-import { ACCENT_POOLS } from "@/agents/robotAccessories";
-import {
-  liveWorld,
-  useWorldStore,
-  type WorldStore,
-} from "@/state/useWorldStore";
+import { animatorInputsFor, chestHeight, rigFor } from "@/agents/agentRigs";
+import type { AgentRig } from "@/agents/agentRigs";
+import { AgentSlotAllocator } from "@/agents/agentSlots";
+import { ACCENT_POOLS, ACCESSORY_POOLS } from "@/agents/robotAccessories";
+import { liveWorld, useWorldStore, type WorldStore } from "@/state/useWorldStore";
 import { reducedMotion } from "@/state/reducedMotion";
-import { agentFrozen, agentVisuals, findAgentState } from "./agentVisuals";
-import { labelAnchorFor } from "@/world/labelAnchors";
 import {
-  ACCESSORY_LAYOUT,
-  ACCESSORY_POOLS,
-  JOINT_BOX_COUNT,
-  JOINT_SPHERE_COUNT,
+  agentVisualFor,
+  findAgentState,
+  releaseAgentVisual,
+} from "./agentVisuals";
+import { labelAnchorFor, releaseLabelAnchor } from "@/world/labelAnchors";
+import {
+  MAX_ROBOTS,
   PULSE_DURATION,
-  ROBOT_COLORS,
-  ROBOT_COUNT,
-  ROBOT_HOVER_IDS,
-  ROBOT_PROFILES,
-  ROBOT_RIGS,
+  ROBOT_CAPSULE_COUNT,
+  ROBOT_FOOT_COUNT,
+  ROBOT_HAND_COUNT,
+  ROBOT_HEAD_COUNT,
   SELECTION_COLOR,
+  accessoryInstanceCount,
+  clearRobotSlot,
+  setRobotColor,
   writeLabelAnchor,
   writeRings,
   writeRobotMatrices,
-  type AccessoryPool,
   type RobotPools,
   type RobotRings,
 } from "./robotRig";
 import {
-  accentMaterial,
   geometries,
   hoverRingMaterial,
   materials,
@@ -51,16 +59,24 @@ import {
 } from "./sharedResources";
 
 /**
- * The six procedural robots, drawn as twelve instanced part pools plus six
- * emissive chest accents rather than per-character mesh trees. Six characters
- * times roughly fifteen parts would add ninety draw calls; pooling by part
- * type leaves the whole team at a fraction of that, which keeps the overview
- * under the 150-call budget. Each instance still gets its own rig-scaled
- * transform, so the roles keep distinct silhouettes.
+ * The procedural robots. Part geometry is pooled the same way as phase 4,
+ * but the roster is now dynamic: core agents take slots 0..5, live agents
+ * acquire a free slot on spawn and release it once their despawn animation
+ * has finished. One `AgentCharacter` marker exists per current id (keyed by
+ * id); the pooled frame loop draws them all.
  */
 
 const accessoryMaterial = sharedMaterial(
   "robot-accessory-accent",
+  () =>
+    new THREE.MeshBasicMaterial({
+      color: "#ffffff",
+      toneMapped: false,
+    }),
+);
+
+const chestMaterial = sharedMaterial(
+  "robot-chest-accent",
   () =>
     new THREE.MeshBasicMaterial({
       color: "#ffffff",
@@ -98,54 +114,35 @@ const pulseRingMaterial = sharedMaterial(
 
 const selectionRingMaterial = hoverRingMaterial(SELECTION_COLOR);
 
-/**
- * Static ring progress under reduced motion: the success/error cue keeps a
- * visible ring, but its radius and opacity never change while it is active.
- */
+/** Reduced motion keeps a ring but never animates its radius or opacity. */
 const CALM_PULSE_PROGRESS = 0.35;
-
-/**
- * Rig inputs for the animator, precomputed once per agent. Building these in
- * the frame loop allocated one object per agent per frame.
- */
-const ROBOT_ANIMATOR_INPUTS = ROBOT_RIGS.map((rig) => animatorInputsFor(rig));
+/** Spawn and despawn scale (and so fade) over this many real seconds. */
+const SPAWN_SECONDS = 0.4;
+const CREATE_RETRY_SECONDS = 0.5;
+/** Scratch list reused each frame, so finishing a robot allocates nothing. */
+const finishedScratch: AgentId[] = [];
 
 interface VisualState {
+  id: AgentId;
+  slot: number;
+  role: AgentRole;
+  rig: AgentRig;
+  color: THREE.Color;
+  animator: AgentAnimator;
+  legLength: number;
   x: number;
   z: number;
   heading: number;
   speed: number;
-  animator: AgentAnimator;
   lastStatus: AgentStatus;
   pulse: number;
   pulseTone: "success" | "error";
   initialized: boolean;
-}
-
-function createVisualState(id: AgentId): VisualState {
-  const pose = agentVisuals[id];
-  return {
-    x: pose.x,
-    z: pose.z,
-    heading: pose.heading,
-    speed: 0,
-    animator: new AgentAnimator(),
-    lastStatus: "idle",
-    pulse: PULSE_DURATION,
-    pulseTone: "success",
-    initialized: false,
-  };
-}
-
-function createVisuals(): Record<AgentId, VisualState> {
-  return {
-    orion: createVisualState("orion"),
-    iris: createVisualState("iris"),
-    piper: createVisualState("piper"),
-    kai: createVisualState("kai"),
-    quinn: createVisualState("quinn"),
-    rex: createVisualState("rex"),
-  };
+  spawn: number;
+  removed: boolean;
+  despawn: number;
+  /** Cached hover target string, so the frame loop never builds one. */
+  hoverKey: string;
 }
 
 interface AgentFrameContext {
@@ -158,6 +155,12 @@ interface AgentFrameContext {
   pools: RobotPools;
   rings: RobotRings;
 }
+
+/** One slot allocation is enough for the whole tab. */
+const coreSlot = (id: AgentId): number | null => {
+  const index = CORE_AGENT_IDS.indexOf(id);
+  return index === -1 ? null : index;
+};
 
 /** Start a robot where the first snapshot says it is, never at the origin. */
 function initializeVisual(
@@ -172,10 +175,6 @@ function initializeVisual(
   visual.initialized = true;
 }
 
-/**
- * Track a status edge, arm the success/error pulse and advance it. Returns
- * the status the pose should blend towards.
- */
 function updateVisualStatus(
   visual: VisualState,
   agent: AgentState | undefined,
@@ -191,23 +190,16 @@ function updateVisualStatus(
     visual.lastStatus = status;
   }
 
-  const frozen = agentFrozen(agent, running);
+  const frozen = agent === undefined || agent.paused || !running;
   if (visual.pulse < PULSE_DURATION) {
-    // Real time, so a pause cannot freeze a bright ring; the usual
-    // frozen slow-down keeps the pulse from ticking while paused.
     visual.pulse = Math.min(
       PULSE_DURATION,
       visual.pulse + delta * animationTimeScale(frozen),
     );
   }
-
   return status;
 }
 
-/**
- * Damp the drawn position, heading and measured speed towards the snapshot.
- * Returns the status the pose should blend towards.
- */
 function updateVisualMotion(
   visual: VisualState,
   agent: AgentState | undefined,
@@ -245,8 +237,6 @@ function updateVisualMotion(
 
   if (!snapped && delta > 0) {
     const moved = Math.hypot(visual.x - beforeX, visual.z - beforeZ);
-    // Keep the cap above 4x walk speed so the stride stays matched when the
-    // robot really moves that fast.
     const instantSpeed = Math.min(moved / delta, 12);
     visual.speed = dampValue(visual.speed, instantSpeed, 6, delta);
   } else {
@@ -256,10 +246,6 @@ function updateVisualMotion(
   return updateVisualStatus(visual, agent, delta, running);
 }
 
-/**
- * Brightness of the floor status ring: working, thinking and communicating
- * agents read brighter than idle ones.
- */
 function ringEnergy(animator: AgentAnimator, paused: boolean): number {
   const workWeight = Math.max(
     animator.weights.working,
@@ -270,138 +256,75 @@ function ringEnergy(animator: AgentAnimator, paused: boolean): number {
 }
 
 /** Publish the damped pose that comm arcs, hit boxes and labels read. */
-function publishVisualPose(
-  profile: (typeof ROBOT_PROFILES)[number],
-  visual: VisualState,
-  rig: (typeof ROBOT_RIGS)[number],
-): void {
-  const poseOut = agentVisuals[profile.id];
+function publishVisualPose(visual: VisualState, visualScale: number): void {
+  const poseOut = agentVisualFor(visual.id);
+  const drawn = visual.rig.scale * visualScale;
   poseOut.x = visual.x;
   poseOut.z = visual.z;
   poseOut.heading = visual.heading;
-  poseOut.scale = rig.scale;
-  poseOut.chestY = chestHeight(rig) * rig.scale;
-  poseOut.labelY = rig.labelY * rig.scale;
+  poseOut.scale = drawn;
+  poseOut.chestY = chestHeight(visual.rig) * drawn;
+  poseOut.labelY = visual.rig.labelY * drawn;
 }
 
-/** Floor decals: status energy, selection/hover ring and pulse. */
-function writeAgentRings(
-  agentIndex: number,
-  visual: VisualState,
-  agent: AgentState | undefined,
-  store: WorldStore,
-  root: THREE.Matrix4,
-  rings: RobotRings,
-): void {
-  const highlighted =
-    store.selectedAgentId === ROBOT_PROFILES[agentIndex].id ||
-    store.hovered === ROBOT_HOVER_IDS[agentIndex];
-  const calm = reducedMotion.current;
-  writeRings(
-    agentIndex,
-    ringEnergy(visual.animator, agent?.paused ?? false),
-    highlighted,
-    visual.pulse < PULSE_DURATION,
-    calm
-      ? CALM_PULSE_PROGRESS
-      : Math.min(1, visual.pulse / PULSE_DURATION),
-    visual.pulseTone,
-    root,
-    rings,
-  );
-}
-
-/** Pose, matrices, floor rings and label anchor for one robot. */
-function writeAgentVisual(
-  agentIndex: number,
-  visual: VisualState,
-  status: AgentStatus,
-  agent: AgentState | undefined,
-  delta: number,
-  context: AgentFrameContext,
-): void {
-  const profile = ROBOT_PROFILES[agentIndex];
-  const rig = ROBOT_RIGS[agentIndex];
-  const frozen = agentFrozen(agent, context.running);
-  const pose = visual.animator.update(
-    delta,
-    status,
-    visual.speed,
-    frozen,
-    ROBOT_ANIMATOR_INPUTS[agentIndex].legLength,
-    context.calm,
-  );
-
-  publishVisualPose(profile, visual, rig);
-
-  const root = writeRobotMatrices(
-    agentIndex,
-    pose,
-    rig,
-    visual.x,
-    visual.z,
-    visual.heading,
-    context.pools,
-  );
-
-  writeAgentRings(
-    agentIndex,
-    visual,
-    agent,
-    context.store,
-    root,
-    context.rings,
-  );
-
-  writeLabelAnchor(
-    profile.id,
-    visual.x,
-    visual.z,
-    rig,
-    context.camera,
-    context.width,
-    context.height,
-    labelAnchorFor(profile.id),
-  );
-}
-
-/** Flag every instanced buffer that `writeAgentVisual` filled this frame. */
 function markPoolsDirty(pools: RobotPools, rings: RobotRings): void {
   if (pools.capsules) pools.capsules.instanceMatrix.needsUpdate = true;
   if (pools.heads) pools.heads.instanceMatrix.needsUpdate = true;
+  if (pools.chests) {
+    pools.chests.instanceMatrix.needsUpdate = true;
+    if (pools.chests.instanceColor) pools.chests.instanceColor.needsUpdate = true;
+  }
   for (const pool of ACCESSORY_POOLS) {
     const mesh = pools.accessories[pool];
-    if (mesh) mesh.instanceMatrix.needsUpdate = true;
+    if (mesh) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
   }
   if (rings.status) {
     rings.status.instanceMatrix.needsUpdate = true;
-    if (rings.status.instanceColor) {
-      rings.status.instanceColor.needsUpdate = true;
-    }
+    if (rings.status.instanceColor) rings.status.instanceColor.needsUpdate = true;
   }
-  if (rings.selection) {
-    rings.selection.instanceMatrix.needsUpdate = true;
-  }
+  if (rings.selection) rings.selection.instanceMatrix.needsUpdate = true;
   if (rings.pulse) {
     rings.pulse.instanceMatrix.needsUpdate = true;
-    if (rings.pulse.instanceColor) {
-      rings.pulse.instanceColor.needsUpdate = true;
-    }
+    if (rings.pulse.instanceColor) rings.pulse.instanceColor.needsUpdate = true;
   }
-  if (rings.shadows) {
-    rings.shadows.instanceMatrix.needsUpdate = true;
-  }
+  if (rings.shadows) rings.shadows.instanceMatrix.needsUpdate = true;
 }
+
+function easeScale(value: number): number {
+  const clamped = Math.max(0, Math.min(1, value));
+  return clamped * clamped * (3 - 2 * clamped);
+}
+
+/** One per agent id, keyed by id. The pooled loop does the drawing. */
+export function AgentCharacter({ agentId }: { agentId: AgentId }) {
+  void agentId;
+  return null;
+}
+
+const ACCESSORY_GEOMETRIES: Record<
+  (typeof ACCESSORY_POOLS)[number],
+  THREE.BufferGeometry
+> = {
+  accentBoxes: geometries.box,
+  jointBoxes: geometries.box,
+  jointCylinders: geometries.cylinder,
+  jointSpheres: geometries.sphere,
+  accentSpheres: geometries.sphere,
+  accentRings: geometries.ring,
+};
 
 export function AgentCharacters({ high }: { high: boolean }) {
   const capsules = useRef<THREE.InstancedMesh>(null);
   const heads = useRef<THREE.InstancedMesh>(null);
-  const chests = useRef<Array<THREE.Mesh | null>>([]);
+  const chests = useRef<THREE.InstancedMesh>(null);
   const statusRings = useRef<THREE.InstancedMesh>(null);
   const selectionRings = useRef<THREE.InstancedMesh>(null);
   const pulseRings = useRef<THREE.InstancedMesh>(null);
   const shadows = useRef<THREE.InstancedMesh>(null);
-  const poolRefs = useRef<Record<AccessoryPool, THREE.InstancedMesh | null>>({
+  const poolRefs = useRef<Record<string, THREE.InstancedMesh | null>>({
     accentBoxes: null,
     jointBoxes: null,
     jointCylinders: null,
@@ -412,7 +335,7 @@ export function AgentCharacters({ high }: { high: boolean }) {
   const pools = useRef<RobotPools>({
     capsules: null,
     heads: null,
-    chests: [],
+    chests: null,
     accessories: {
       accentBoxes: null,
       jointBoxes: null,
@@ -429,26 +352,86 @@ export function AgentCharacters({ high }: { high: boolean }) {
     shadows: null,
   });
 
-  const visuals = useRef<Record<AgentId, VisualState> | null>(null);
-  if (visuals.current === null) visuals.current = createVisuals();
+  const visuals = useRef<Map<AgentId, VisualState>>(new Map());
+  const allocator = useRef<AgentSlotAllocator | null>(null);
+  const nextCreateRetry = useRef(0);
+  if (allocator.current === null) {
+    allocator.current = new AgentSlotAllocator(CORE_AGENT_IDS.length, MAX_AGENTS);
+  }
   const frameContext = useRef<AgentFrameContext | null>(null);
 
-  useLayoutEffect(() => {
-    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
-    const color = new THREE.Color();
+  const agents = useWorldStore((state) => state.world?.agents);
 
+  const createVisual = (agent: AgentState): VisualState | null => {
+    const id = agent.id;
+    if (visuals.current.has(id)) return visuals.current.get(id) ?? null;
+    const slots = allocator.current;
+    if (slots === null) return null;
+
+    const fixed = coreSlot(id);
+    const slot = fixed ?? slots.acquire();
+    if (slot === null) return null;
+
+    const profile: AgentProfile = getAgentProfile(id);
+    const role = profile.role;
+    const rig = rigFor(role);
+    const color = new THREE.Color(
+      profile.kind === "core" ? profile.color : colorForAgent(id),
+    );
+    const visual: VisualState = {
+      id,
+      slot,
+      role,
+      rig,
+      color,
+      animator: new AgentAnimator(),
+      legLength: animatorInputsFor(rig).legLength,
+      x: agent.position.x,
+      z: agent.position.z,
+      heading: agent.heading,
+      speed: 0,
+      lastStatus: "idle",
+      pulse: PULSE_DURATION,
+      pulseTone: "success",
+      initialized: true,
+      spawn: profile.kind === "core" ? 1 : 0,
+      removed: false,
+      despawn: 0,
+      hoverKey: `agent:${id}`,
+    };
+    visuals.current.set(id, visual);
+    setRobotColor(slot, role, color, pools.current);
+    return visual;
+  };
+
+  const dropVisual = (id: AgentId): void => {
+    const visual = visuals.current.get(id);
+    if (!visual) return;
+    clearRobotSlot(visual.slot, pools.current, rings.current);
+    if (coreSlot(id) === null) allocator.current?.release(visual.slot);
+    visuals.current.delete(id);
+    releaseAgentVisual(id);
+    releaseLabelAnchor(id);
+  };
+
+  useLayoutEffect(() => {
     pools.current.capsules = capsules.current;
     pools.current.heads = heads.current;
     pools.current.chests = chests.current;
-    pools.current.accessories = poolRefs.current;
+    pools.current.accessories = poolRefs.current as RobotPools["accessories"];
     rings.current.status = statusRings.current;
     rings.current.selection = selectionRings.current;
     rings.current.pulse = pulseRings.current;
     rings.current.shadows = shadows.current;
 
+    const zero = new THREE.Matrix4().makeScale(0, 0, 0);
+    const color = new THREE.Color();
+    color.setRGB(0, 0, 0);
+
     for (const mesh of [
       capsules.current,
       heads.current,
+      chests.current,
       statusRings.current,
       selectionRings.current,
       pulseRings.current,
@@ -457,58 +440,66 @@ export function AgentCharacters({ high }: { high: boolean }) {
     ]) {
       if (!mesh) continue;
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-      // Nothing should be drawn until the first frame writes real matrices.
       for (let index = 0; index < mesh.count; index += 1) {
         mesh.setMatrixAt(index, zero);
       }
       mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // Accent parts take the owning agent's colour once; the colour never
-    // changes, only the transforms do.
-    for (const pool of ACCENT_POOLS) {
-      const mesh = poolRefs.current[pool];
-      if (!mesh) continue;
-      for (let agentIndex = 0; agentIndex < ROBOT_COUNT; agentIndex += 1) {
-        color.copy(ROBOT_COLORS[agentIndex]);
-        for (const slot of ACCESSORY_LAYOUT.slots[agentIndex]) {
-          if (slot.pool !== pool) continue;
-          mesh.setColorAt(slot.index, color);
-        }
-      }
-      if (mesh.instanceColor) {
+    for (let index = 0; index < MAX_ROBOTS; index += 1) {
+      statusRings.current?.setColorAt(index, color);
+      pulseRings.current?.setColorAt(index, color);
+    }
+    color.setRGB(1, 1, 1);
+    for (let index = 0; index < MAX_ROBOTS; index += 1) {
+      shadows.current?.setColorAt(index, color);
+      chests.current?.setColorAt(index, color);
+    }
+    for (const mesh of [statusRings.current, pulseRings.current]) {
+      if (mesh?.instanceColor) {
         mesh.instanceColor.setUsage(THREE.DynamicDrawUsage);
         mesh.instanceColor.needsUpdate = true;
       }
     }
-
-    color.setRGB(0, 0, 0);
-    for (let agentIndex = 0; agentIndex < ROBOT_COUNT; agentIndex += 1) {
-      statusRings.current?.setColorAt(agentIndex, color);
-      pulseRings.current?.setColorAt(agentIndex, color);
-    }
-    color.setRGB(1, 1, 1);
-    for (let agentIndex = 0; agentIndex < ROBOT_COUNT; agentIndex += 1) {
-      shadows.current?.setColorAt(agentIndex, color);
-    }
-    if (statusRings.current?.instanceColor) {
-      statusRings.current.instanceColor.setUsage(THREE.DynamicDrawUsage);
-      statusRings.current.instanceColor.needsUpdate = true;
-    }
-    if (pulseRings.current?.instanceColor) {
-      pulseRings.current.instanceColor.setUsage(THREE.DynamicDrawUsage);
-      pulseRings.current.instanceColor.needsUpdate = true;
-    }
-    if (shadows.current?.instanceColor) {
-      shadows.current.instanceColor.needsUpdate = true;
+    if (chests.current?.instanceColor) {
+      chests.current.instanceColor.setUsage(THREE.DynamicDrawUsage);
+      chests.current.instanceColor.needsUpdate = true;
     }
   }, []);
 
+  useEffect(() => {
+    const visualsMap = visuals.current;
+    const slots = allocator.current;
+    return () => {
+      // Unmount leaves the whole pool behind: drop the per-agent records and
+      // anchors so a StrictMode remount starts from a clean slate.
+      for (const id of visualsMap.keys()) {
+        releaseAgentVisual(id);
+        releaseLabelAnchor(id);
+      }
+      visualsMap.clear();
+      slots?.reset();
+    };
+  }, []);
+
   useFrame((frame, delta) => {
-    const visualRecord = visuals.current;
-    if (visualRecord === null) return;
     const snapshot = liveWorld.current;
+    const liveAgents = snapshot?.agents;
     const running = snapshot?.status === "running";
+
+    // Any agent in the authoritative snapshot without a visual was spawned
+    // while React still showed the previous mirror.
+    if (liveAgents) {
+      for (const agent of liveAgents) {
+        if (visuals.current.has(agent.id)) continue;
+        // A full pool must not retry (and allocate) every frame.
+        if (frame.clock.elapsedTime < nextCreateRetry.current) continue;
+        if (createVisual(agent) === null && coreSlot(agent.id) === null) {
+          nextCreateRetry.current = frame.clock.elapsedTime + CREATE_RETRY_SECONDS;
+        }
+      }
+    }
+
     // The controller moved the camera earlier this frame; refresh its world
     // matrices so the projected bubble anchors match the current frame.
     const camera = frame.camera;
@@ -538,129 +529,178 @@ export function AgentCharacters({ high }: { high: boolean }) {
     context.pools = pools.current;
     context.rings = rings.current;
 
-    for (let agentIndex = 0; agentIndex < ROBOT_COUNT; agentIndex += 1) {
-      const profile = ROBOT_PROFILES[agentIndex];
-      const visual = visualRecord[profile.id];
-      const agent = findAgentState(snapshot?.agents, profile.id);
+    const calm = context.calm;
+    finishedScratch.length = 0;
+
+    for (const visual of visuals.current.values()) {
+      const agent = findAgentState(liveAgents, visual.id);
+      if (agent) {
+        if (visual.removed) {
+          // Reappeared mid-despawn: smoothstep is symmetric, so this spawn
+          // value reproduces the current fade-out scale and eases back up.
+          visual.spawn = Math.max(0, 1 - visual.despawn / SPAWN_SECONDS);
+          visual.despawn = 0;
+        }
+        visual.removed = false;
+        if (visual.spawn < 1) {
+          visual.spawn = calm ? 1 : Math.min(1, visual.spawn + delta / SPAWN_SECONDS);
+        }
+      } else {
+        const isCore = coreSlot(visual.id) !== null;
+        if (isCore) {
+          // A transient core omission must not erase a station owner.
+          visual.removed = false;
+        } else if (!visual.removed) {
+          visual.removed = true;
+          visual.despawn = 0;
+        }
+        if (visual.removed) {
+          visual.despawn += delta;
+          if (calm || visual.despawn >= SPAWN_SECONDS) {
+            finishedScratch.push(visual.id);
+            continue;
+          }
+        }
+      }
+
       const status = updateVisualMotion(visual, agent, delta, running);
-      writeAgentVisual(agentIndex, visual, status, agent, delta, context);
+      const frozen = agent === undefined || agent.paused || !running;
+      const pose = visual.animator.update(
+        delta,
+        status,
+        visual.speed,
+        frozen,
+        visual.legLength,
+        calm,
+      );
+
+      let visualScale = 1;
+      if (!calm) {
+        if (visual.removed) {
+          visualScale = 1 - easeScale(visual.despawn / SPAWN_SECONDS);
+        } else if (visual.spawn < 1) {
+          visualScale = easeScale(visual.spawn);
+        }
+      }
+
+      publishVisualPose(visual, visualScale);
+
+      const root = writeRobotMatrices(
+        visual.slot,
+        pose,
+        visual.rig,
+        visual.role,
+        visual.x,
+        visual.z,
+        visual.heading,
+        visualScale,
+        context.pools,
+      );
+
+      const highlighted =
+        context.store.selectedAgentId === visual.id ||
+        context.store.hovered === visual.hoverKey;
+      writeRings(
+        visual.slot,
+        visual.color,
+        ringEnergy(visual.animator, agent?.paused ?? false),
+        highlighted,
+        visual.pulse < PULSE_DURATION,
+        calm
+          ? CALM_PULSE_PROGRESS
+          : Math.min(1, visual.pulse / PULSE_DURATION),
+        visual.pulseTone,
+        root,
+        context.rings,
+      );
+
+      writeLabelAnchor(
+        visual.id,
+        visual.x,
+        visual.z,
+        visual.rig,
+        visualScale,
+        context.camera,
+        context.width,
+        context.height,
+        labelAnchorFor(visual.id),
+      );
     }
 
-    markPoolsDirty(pools.current, rings.current);
+    if (finishedScratch.length > 0) {
+      for (const id of finishedScratch) dropVisual(id);
+      finishedScratch.length = 0;
+    }
+
+    markPoolsDirty(context.pools, context.rings);
   });
 
+  const shownAgents = agents ?? [];
   return (
     <group name="agents">
+      {shownAgents.map((agent) => (
+        <AgentCharacter key={agent.id} agentId={agent.id} />
+      ))}
       <instancedMesh
         ref={capsules}
-        args={[geometries.capsule, materials.ceramic, ROBOT_COUNT * 5]}
+        args={[geometries.capsule, materials.ceramic, ROBOT_CAPSULE_COUNT]}
         castShadow={high}
         frustumCulled={false}
       />
       <instancedMesh
         ref={heads}
-        args={[geometries.sphere, materials.ceramic, ROBOT_COUNT]}
+        args={[geometries.sphere, materials.ceramic, ROBOT_HEAD_COUNT]}
+        castShadow={high}
+        frustumCulled={false}
+      />
+      <instancedMesh
+        ref={chests}
+        args={[geometries.box, chestMaterial, MAX_ROBOTS]}
         castShadow={high}
         frustumCulled={false}
       />
 
-      <instancedMesh
-        ref={(node) => {
-          poolRefs.current.accentBoxes = node;
-        }}
-        args={[
-          geometries.box,
-          accessoryMaterial,
-          ACCESSORY_LAYOUT.counts.accentBoxes,
-        ]}
-        castShadow={high}
-        frustumCulled={false}
-      />
-      <instancedMesh
-        ref={(node) => {
-          poolRefs.current.jointBoxes = node;
-        }}
-        args={[geometries.box, materials.joint, JOINT_BOX_COUNT]}
-        castShadow={high}
-        frustumCulled={false}
-      />
-      <instancedMesh
-        ref={(node) => {
-          poolRefs.current.jointCylinders = node;
-        }}
-        args={[
-          geometries.cylinder,
-          materials.joint,
-          ACCESSORY_LAYOUT.counts.jointCylinders,
-        ]}
-        castShadow={high}
-        frustumCulled={false}
-      />
-      <instancedMesh
-        ref={(node) => {
-          poolRefs.current.jointSpheres = node;
-        }}
-        args={[geometries.sphere, materials.joint, JOINT_SPHERE_COUNT]}
-        castShadow={high}
-        frustumCulled={false}
-      />
-      <instancedMesh
-        ref={(node) => {
-          poolRefs.current.accentSpheres = node;
-        }}
-        args={[
-          geometries.sphere,
-          accessoryMaterial,
-          ACCESSORY_LAYOUT.counts.accentSpheres,
-        ]}
-        castShadow={high}
-        frustumCulled={false}
-      />
-      <instancedMesh
-        ref={(node) => {
-          poolRefs.current.accentRings = node;
-        }}
-        args={[
-          geometries.ring,
-          accessoryMaterial,
-          ACCESSORY_LAYOUT.counts.accentRings,
-        ]}
-        frustumCulled={false}
-      />
-
-      {ROBOT_PROFILES.map((profile, index) => (
-        <mesh
-          key={profile.id}
+      {ACCESSORY_POOLS.map((pool) => (
+        <instancedMesh
+          key={pool}
           ref={(node) => {
-            chests.current[index] = node;
+            poolRefs.current[pool] = node;
           }}
-          geometry={geometries.box}
-          material={accentMaterial(profile.color)}
+          args={[
+            ACCESSORY_GEOMETRIES[pool],
+            ACCENT_POOLS.has(pool) ? accessoryMaterial : materials.joint,
+            pool === "jointSpheres"
+              ? ROBOT_HAND_COUNT
+              : pool === "jointBoxes"
+                ? ROBOT_FOOT_COUNT
+                : accessoryInstanceCount(pool),
+          ]}
           castShadow={high}
+          frustumCulled={false}
         />
       ))}
 
       <instancedMesh
         ref={statusRings}
-        args={[geometries.ring, statusRingMaterial, ROBOT_COUNT]}
+        args={[geometries.ring, statusRingMaterial, MAX_ROBOTS]}
         renderOrder={1}
         frustumCulled={false}
       />
       <instancedMesh
         ref={selectionRings}
-        args={[geometries.ring, selectionRingMaterial, ROBOT_COUNT]}
+        args={[geometries.ring, selectionRingMaterial, MAX_ROBOTS]}
         renderOrder={2}
         frustumCulled={false}
       />
       <instancedMesh
         ref={pulseRings}
-        args={[geometries.ring, pulseRingMaterial, ROBOT_COUNT]}
+        args={[geometries.ring, pulseRingMaterial, MAX_ROBOTS]}
         renderOrder={3}
         frustumCulled={false}
       />
       <instancedMesh
         ref={shadows}
-        args={[geometries.plane, materials.contactShadow, ROBOT_COUNT]}
+        args={[geometries.plane, materials.contactShadow, MAX_ROBOTS]}
         renderOrder={0}
         frustumCulled={false}
       />

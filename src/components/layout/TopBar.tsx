@@ -5,7 +5,7 @@ import { AlertTriangle } from "lucide-react";
 import { isTerminalPhase } from "@/tasks/taskTypes";
 import { pendingTasks } from "@/tasks/taskActions";
 import { SimulationControls } from "@/components/controls/SimulationControls";
-import { isAgentActive, useWorldStore } from "@/state/useWorldStore";
+import { isAgentActive, useWorldStore, waitingAgentCount } from "@/state/useWorldStore";
 import { describeQuality } from "@/state/qualityPolicy";
 import { Logo, cn } from "@/components/ui";
 
@@ -48,6 +48,7 @@ export function TopBar({
       : 0,
   );
   const status = useWorldStore((state) => state.simStatus);
+  const waiting = useWorldStore((state) => waitingAgentCount(state.world));
   const backend = useWorldStore((state) => state.backend);
   const quality = useWorldStore((state) => state.quality);
   const qualityAuto = useWorldStore((state) => state.qualityAuto);
@@ -97,6 +98,15 @@ export function TopBar({
 
       <div className="order-3 flex w-full items-center justify-between gap-2 sm:order-2 sm:w-auto sm:justify-start sm:gap-5">
         <Metric label="Agents" value={agentCount} />
+        {waiting > 0 && (
+          <span
+            data-testid="waiting-agents"
+            className="inline-flex items-center rounded-full border border-warn/30 bg-warn/[0.08] px-2 py-1 font-mono text-[9.5px] leading-none text-warn"
+            title="Live agents waiting for a dispatch bay"
+          >
+            +{waiting} waiting
+          </span>
+        )}
         <Metric label="Active" value={activeCount} />
         <Metric label="Pending" value={pendingCount} />
         <Metric label="Completed" value={completedCount} />

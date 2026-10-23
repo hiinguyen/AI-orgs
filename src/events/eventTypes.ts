@@ -29,6 +29,8 @@ export const EVENT_TYPES = [
   "agent.paused",
   "agent.resumed",
   "agent.ambient",
+  "agent.spawned",
+  "agent.despawned",
 ] as const;
 
 export type AgentEventType = (typeof EVENT_TYPES)[number];

@@ -1,5 +1,5 @@
 import type { AgentId } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import type { Task } from "@/tasks/taskTypes";
 import { PHASE_OWNER } from "@/tasks/taskTypes";
 
@@ -73,7 +73,7 @@ export function taskProgressColor(task: Task): string {
   if (task.phase === "failed") return "var(--color-bad)";
   if (task.status === "blocked") return "var(--color-warn)";
   if (task.assignedAgentId !== null) {
-    return AGENT_BY_ID[task.assignedAgentId].color;
+    return getAgentProfile(task.assignedAgentId).color;
   }
   return "var(--color-signal)";
 }

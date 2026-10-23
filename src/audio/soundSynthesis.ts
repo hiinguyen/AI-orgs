@@ -363,6 +363,28 @@ const RENDERERS: Readonly<Record<CueId, CueRenderer>> = {
       gain: 0.2,
     });
   },
+  spawn: (voice) => {
+    // A soft rising two-note blip: a new subagent joined the floor.
+    voice.tone({ type: "sine", from: 587.33, duration: 0.08, gain: 0.05 });
+    voice.tone({
+      type: "sine",
+      from: 880,
+      at: 0.08,
+      duration: 0.14,
+      gain: 0.05,
+    });
+  },
+  despawn: (voice) => {
+    // The mirror image, quieter, so a busy floor of agents stays calm.
+    voice.tone({ type: "sine", from: 783.99, duration: 0.08, gain: 0.045 });
+    voice.tone({
+      type: "sine",
+      from: 523.25,
+      at: 0.08,
+      duration: 0.16,
+      gain: 0.045,
+    });
+  },
 };
 
 /** Play one cue. Pitch only matters to the pings and the triad arpeggio. */

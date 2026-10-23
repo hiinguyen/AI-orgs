@@ -186,7 +186,9 @@ export const AGENT_RIGS: Record<AgentRole, AgentRig> = {
 };
 
 export function rigFor(role: AgentRole): AgentRig {
-  return AGENT_RIGS[role];
+  // A newer backend role still gets a robot; the engineer silhouette is the
+  // documented fallback.
+  return (AGENT_RIGS as Partial<Record<string, AgentRig>>)[role] ?? AGENT_RIGS.engineer;
 }
 
 /** Speech-bubble anchor above the floor once the rig scale is applied. */

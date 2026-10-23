@@ -1,5 +1,6 @@
 import type { AgentId, AgentState } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { CORE_AGENT_IDS } from "@/agents/agentTypes";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import { chestHeight, labelHeight, rigFor } from "@/agents/agentRigs";
 import { headingFor, slotFor } from "@/simulation/worldLayout";
 
@@ -8,6 +9,10 @@ import { headingFor, slotFor } from "@/simulation/worldLayout";
  * must attach to what the user actually sees: comm arcs, hit boxes and the
  * label projection. It is rendering state only; the simulation snapshot stays
  * untouched and authoritative.
+ *
+ * Phase 9: this is an open map. Entries appear when an agent spawns and are
+ * released when its despawn animation finishes, so a live session cannot leak
+ * one pose object per subagent.
  */
 export interface AgentVisualPose {
   x: number;
@@ -22,29 +27,47 @@ export interface AgentVisualPose {
 }
 
 function initialPose(id: AgentId): AgentVisualPose {
-  const profile = AGENT_BY_ID[id];
+  const profile = getAgentProfile(id);
   const rig = rigFor(profile.role);
-  const slot = slotFor(profile.home, profile.seat);
+  const home = profile.home ?? "hub";
+  const slot = slotFor(home, profile.seat);
   return {
     x: slot.x,
     z: slot.z,
-    heading: headingFor(profile.home, profile.seat),
+    heading: headingFor(home, profile.seat),
     scale: rig.scale,
     chestY: chestHeight(rig) * rig.scale,
     labelY: labelHeight(rig),
   };
 }
 
-export const agentVisuals: Record<AgentId, AgentVisualPose> = {
-  orion: initialPose("orion"),
-  iris: initialPose("iris"),
-  piper: initialPose("piper"),
-  kai: initialPose("kai"),
-  quinn: initialPose("quinn"),
-  rex: initialPose("rex"),
-};
+export const agentVisuals = new Map<AgentId, AgentVisualPose>();
 
-/** Linear lookup over the six snapshot agents, allocation free. */
+for (const id of CORE_AGENT_IDS) {
+  agentVisuals.set(id, initialPose(id));
+}
+
+/** The stable live pose object for an id, created on first use. */
+export function agentVisualFor(id: AgentId): AgentVisualPose {
+  const existing = agentVisuals.get(id);
+  if (existing) return existing;
+  const created = initialPose(id);
+  agentVisuals.set(id, created);
+  return created;
+}
+
+export function releaseAgentVisual(id: AgentId): void {
+  agentVisuals.delete(id);
+}
+
+export function resetAgentVisuals(): void {
+  agentVisuals.clear();
+  for (const id of CORE_AGENT_IDS) {
+    agentVisuals.set(id, initialPose(id));
+  }
+}
+
+/** Linear lookup over the snapshot agents, allocation free. */
 export function findAgentState(
   agents: readonly AgentState[] | undefined,
   id: AgentId,

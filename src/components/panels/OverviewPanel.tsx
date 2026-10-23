@@ -2,7 +2,7 @@
 
 import { Layers, Plus, Sparkles } from "lucide-react";
 import type { AgentState } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import type { Task } from "@/tasks/taskTypes";
 import { activeTasks, queuedTasks } from "@/tasks/taskActions";
 import { feedEvents } from "@/events/eventStore";
@@ -24,6 +24,8 @@ export function OverviewPanel() {
   const selectTask = useWorldStore((state) => state.selectTask);
   const setActiveTab = useWorldStore((state) => state.setActiveTab);
   const openTaskDialog = useWorldStore((state) => state.openTaskDialog);
+  const backend = useWorldStore((state) => state.backend);
+  const live = !backend.simulated;
 
   const inFlight = activeTasks(tasks);
   const queuedCount = queuedTasks(tasks).length;
@@ -35,12 +37,12 @@ export function OverviewPanel() {
         <section className="surface-quiet p-4">
           <p className="eyebrow text-signal">Demo</p>
           <h3 className="mt-1.5 text-[15px] font-semibold tracking-tight text-mist-100">
-            Watch the team ship a feature
+            {live ? "Start a workflow" : "Watch the team ship a feature"}
           </h3>
           <p className="mt-1.5 text-[12px] leading-5 text-mist-300">
-            Orion delegates a JWT authentication task to Piper, Iris, Kai,
-            Quinn and Rex, then the team plans, researches, builds, fails a
-            test, fixes it and gets it reviewed.
+            {live
+              ? "Run the demo or load the sprint to send work to the connected service."
+              : "Orion delegates a JWT authentication task to Piper, Iris, Kai, Quinn and Rex, then the team plans, researches, builds, fails a test, fixes it and gets it reviewed."}
           </p>
           <div className="mt-3 flex flex-wrap gap-1.5">
             <button
@@ -73,9 +75,9 @@ export function OverviewPanel() {
             </button>
           </div>
           <p className="mt-2.5 text-[10.5px] leading-4 text-mist-500">
-            Simulation mode - no live inference. The sprint adds 8 tasks,
-            including a scripted QA failure and one task that fails after
-            three iterations.
+            {live
+              ? "Live backend - agents shown here come from the connected service."
+              : "Simulation mode - no live inference. The sprint adds 8 tasks, including a scripted QA failure and one task that fails after three iterations."}
           </p>
         </section>
       )}
@@ -98,10 +100,10 @@ export function OverviewPanel() {
               <AgentAvatar agentId={agent.id} size={24} />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[12px] font-medium leading-tight text-mist-100">
-                  {AGENT_BY_ID[agent.id].name}
+                  {getAgentProfile(agent.id).name}
                 </span>
                 <span className="mt-0.5 block truncate text-[10px] text-mist-500">
-                  {AGENT_BY_ID[agent.id].roleLabel}
+                  {getAgentProfile(agent.id).roleLabel}
                 </span>
               </span>
               <AgentStatusPill agent={agent} />

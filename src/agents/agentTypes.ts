@@ -1,6 +1,10 @@
 import type { LocationId } from "../simulation/worldLayout.ts";
 
-export type AgentId = "orion" | "iris" | "piper" | "kai" | "quinn" | "rex";
+/**
+ * Phase 9: the agent set is open. Core simulation agents keep their stable
+ * ids; a real backend announces live subagents by any id string.
+ */
+export type AgentId = string;
 
 export type AgentRole =
   | "orchestrator"
@@ -24,6 +28,9 @@ export interface Vec2 {
   z: number;
 }
 
+/** Whether an agent is one of the six simulation agents or a live subagent. */
+export type AgentKind = "core" | "live";
+
 export interface AgentProfile {
   id: AgentId;
   name: string;
@@ -31,9 +38,11 @@ export interface AgentProfile {
   roleLabel: string;
   tagline: string;
   color: string;
-  home: LocationId;
+  /** Core agents live at a station; live agents live in a dispatch bay. */
+  home?: LocationId;
   /** Stable seat index (0..5) used at shared ring locations. */
   seat: number;
+  kind: AgentKind;
 }
 
 /**
@@ -55,7 +64,43 @@ export interface AgentState {
   paused: boolean;
 }
 
-export const AGENT_IDS: readonly AgentId[] = [
+/** A live backend may announce this many live agents; the six core are extra. */
+export const MAX_LIVE_AGENTS = 64;
+/** Total robots the renderer pools for: six core agents plus the live cap. */
+export const MAX_AGENTS = MAX_LIVE_AGENTS + 6;
+/** Defensive upper bound on an id string that arrives from a backend. */
+export const MAX_AGENT_ID_LENGTH = 64;
+
+export const AGENT_ROLES: readonly AgentRole[] = [
+  "orchestrator",
+  "researcher",
+  "product_manager",
+  "engineer",
+  "qa",
+  "reviewer",
+] as const;
+
+export function isAgentRole(value: string): value is AgentRole {
+  return (AGENT_ROLES as readonly string[]).includes(value);
+}
+
+/** An unknown or newer backend role still gets a robot: the engineer rig. */
+export function normaliseAgentRole(value: string): AgentRole {
+  return isAgentRole(value) ? value : "engineer";
+}
+
+/**
+ * Any usable id is a valid agent id now. The check rejects empty and
+ * unbounded strings, plus control characters that would corrupt the DOM.
+ */
+export function isAgentId(value: string): boolean {
+  if (typeof value !== "string") return false;
+  if (value.length === 0 || value.length > MAX_AGENT_ID_LENGTH) return false;
+  return !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+/** Derive the stable slot order for the six core agents. */
+export const CORE_AGENT_IDS: readonly AgentId[] = [
   "orion",
   "iris",
   "piper",
@@ -63,7 +108,3 @@ export const AGENT_IDS: readonly AgentId[] = [
   "quinn",
   "rex",
 ] as const;
-
-export function isAgentId(value: string): value is AgentId {
-  return (AGENT_IDS as readonly string[]).includes(value);
-}

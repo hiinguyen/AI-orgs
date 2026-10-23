@@ -4,11 +4,10 @@ import { useEffect, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { PerformanceMonitor } from "@react-three/drei";
 import * as THREE from "three";
-import { liveWorld, useWorldStore } from "@/state/useWorldStore";
+import { liveWorld, useWorldStore, waitingAgentCount } from "@/state/useWorldStore";
 import { shouldAutoFallback } from "@/state/qualityPolicy";
 import { reducedMotion } from "@/state/reducedMotion";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
-import { AGENT_IDS } from "@/agents/agentTypes";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import { labelAnchorFor } from "@/world/labelAnchors";
 import { Lighting } from "./Lighting";
 import { OfficeEnvironment } from "./OfficeEnvironment";
@@ -45,6 +44,18 @@ declare global {
     __AAW_DEBUG_STATE__?: {
       clock: number;
       status: string;
+      speed: number;
+      waiting: number;
+      uiAgents: number;
+      uiWaiting: number;
+      uiProfiles: number;
+      profiles: Array<{
+        id: string;
+        name: string;
+        role: string;
+        kind: string;
+        color: string;
+      }>;
       links: Array<{ from: string; to: string; kind: string }>;
       agents: Array<{
         id: string;
@@ -165,21 +176,33 @@ function RenderStatsProbe() {
       string,
       { x: number; y: number; scale: number; onScreen: boolean }
     > = {};
-    for (const id of AGENT_IDS) {
-      const anchor = labelAnchorFor(id);
-      anchors[id] = {
-        x: anchor.x,
-        y: anchor.y,
-        scale: anchor.scale,
-        onScreen: anchor.onScreen,
-      };
-    }
-    window.__AAW_LABEL_ANCHORS__ = anchors;
     const snapshot = liveWorld.current;
     if (snapshot) {
+      for (const agent of snapshot.agents) {
+        const anchor = labelAnchorFor(agent.id);
+        anchors[agent.id] = {
+          x: anchor.x,
+          y: anchor.y,
+          scale: anchor.scale,
+          onScreen: anchor.onScreen,
+        };
+      }
+      window.__AAW_LABEL_ANCHORS__ = anchors;
       window.__AAW_DEBUG_STATE__ = {
         clock: snapshot.clock,
         status: snapshot.status,
+        speed: snapshot.speed,
+        waiting: waitingAgentCount(snapshot),
+        uiAgents: store.world?.agents.length ?? 0,
+        uiWaiting: waitingAgentCount(store.world),
+        uiProfiles: store.profiles.size,
+        profiles: snapshot.profiles.map((profile) => ({
+          id: profile.id,
+          name: profile.name,
+          role: profile.role,
+          kind: profile.kind,
+          color: profile.color,
+        })),
         links: snapshot.links.map((link) => ({
           from: link.from,
           to: link.to,
@@ -187,7 +210,7 @@ function RenderStatsProbe() {
         })),
         agents: snapshot.agents.map((agent) => ({
           id: agent.id,
-          name: AGENT_BY_ID[agent.id].name,
+          name: getAgentProfile(agent.id).name,
           status: agent.status,
           activity: agent.activity,
           paused: agent.paused,

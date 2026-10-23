@@ -1,6 +1,6 @@
 import type { AgentId, AgentStatus } from "../agents/agentTypes.ts";
-import { AGENT_IDS } from "../agents/agentTypes.ts";
-import { AGENT_BY_ID } from "../agents/AgentRegistry.ts";
+import { CORE_AGENT_IDS } from "../agents/agentTypes.ts";
+import { getAgentProfile } from "../agents/AgentRegistry.ts";
 import type { WorldSnapshot } from "../integrations/AgentBackend.ts";
 import {
   PHASE_LABELS,
@@ -42,12 +42,12 @@ export const MISSION_CHART_LABELS: Record<MissionChartPhase, string> = {
 
 /** Bar colour follows the phase owner, so the chart matches the roster. */
 export const MISSION_CHART_COLORS: Record<MissionChartPhase, string> = {
-  intake: AGENT_BY_ID.orion.color,
-  planning: AGENT_BY_ID.piper.color,
-  research: AGENT_BY_ID.iris.color,
-  implementation: AGENT_BY_ID.kai.color,
-  testing: AGENT_BY_ID.quinn.color,
-  review: AGENT_BY_ID.rex.color,
+  intake: getAgentProfile("orion").color,
+  planning: getAgentProfile("piper").color,
+  research: getAgentProfile("iris").color,
+  implementation: getAgentProfile("kai").color,
+  testing: getAgentProfile("quinn").color,
+  review: getAgentProfile("rex").color,
   done: "#7cc4d6",
   failed: "#ff8a7a",
 };
@@ -128,12 +128,12 @@ export function phaseCounts(tasks: readonly Task[]): number[] {
 
 function taskColor(task: Task): string {
   if (task.assignedAgentId === null) return "#7cc4d6";
-  return AGENT_BY_ID[task.assignedAgentId].color;
+  return getAgentProfile(task.assignedAgentId).color;
 }
 
 function taskAgentName(task: Task): string {
   if (task.assignedAgentId === null) return "Unassigned";
-  return AGENT_BY_ID[task.assignedAgentId].name;
+  return getAgentProfile(task.assignedAgentId).name;
 }
 
 /**
@@ -163,7 +163,7 @@ export function missionTaskRows(
 }
 
 function agentRow(id: AgentId, snapshot: WorldSnapshot | null): MissionAgentRow {
-  const profile = AGENT_BY_ID[id];
+  const profile = getAgentProfile(id);
   let status: AgentStatus = "idle";
   let paused = false;
   if (snapshot !== null) {
@@ -196,7 +196,7 @@ export function missionView(
     simulated,
     counts: phaseCounts(tasks),
     tasks: missionTaskRows(tasks),
-    agents: AGENT_IDS.map((id) => agentRow(id, snapshot)),
+    agents: CORE_AGENT_IDS.map((id) => agentRow(id, snapshot)),
   };
 }
 

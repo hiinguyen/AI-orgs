@@ -10,7 +10,7 @@ import {
   UserPlus,
 } from "lucide-react";
 import type { AgentId } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import type { AgentEvent } from "@/events/eventTypes";
 import { isAgentCommunication } from "@/events/eventTypes";
 import { eventsForAgent } from "@/events/eventStore";
@@ -42,7 +42,7 @@ export function AgentDetails({ agentId }: { agentId: AgentId }) {
 
   const [view, setView] = useState<"activity" | "communication">("activity");
 
-  const profile = AGENT_BY_ID[agentId];
+  const profile = getAgentProfile(agentId);
   if (!agent) {
     return (
       <div className="px-4 py-4">

@@ -9,7 +9,7 @@ import {
   Signal,
 } from "lucide-react";
 import type { AgentId, AgentState } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import type { TaskPriority, TaskStatus } from "@/tasks/taskTypes";
 import { PRIORITY_LABELS, STATUS_LABELS } from "@/tasks/taskTypes";
 
@@ -60,7 +60,7 @@ export function AgentAvatar({
   size?: number;
   className?: string;
 }) {
-  const agent = AGENT_BY_ID[agentId];
+  const agent = getAgentProfile(agentId);
   return (
     <span
       aria-hidden="true"

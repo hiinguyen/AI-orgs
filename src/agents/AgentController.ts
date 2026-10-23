@@ -429,18 +429,19 @@ export class AgentController {
       return;
     }
 
+    const homeId = this.profile.home ?? "hub";
     const now = this.clock();
     if (this.ambientIdleSince === null) this.ambientIdleSince = now;
 
-    const home = LOCATIONS[this.profile.home];
-    if (this.state.location !== this.profile.home) {
+    const home = LOCATIONS[homeId];
+    if (this.state.location !== homeId) {
       if (now - this.ambientIdleSince < this.config.returnHomeDelay) return;
       this.ambientIdleSince = null;
       this.enqueue(
         [
           {
             kind: "move",
-            to: this.profile.home,
+            to: homeId,
             activity: `Heading back to ${home.label}`,
           },
         ],
@@ -492,7 +493,7 @@ export class AgentController {
         },
         {
           kind: "move",
-          to: this.profile.home,
+          to: homeId,
           activity: `Heading back to ${home.label}`,
         },
       ],

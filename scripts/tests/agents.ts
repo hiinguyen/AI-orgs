@@ -18,8 +18,8 @@ import {
   rigFor,
 } from "../../src/agents/agentRigs.ts";
 import type { AgentRole } from "../../src/agents/agentTypes.ts";
-import { AGENT_IDS } from "../../src/agents/agentTypes.ts";
-import { AGENT_BY_ID } from "../../src/agents/AgentRegistry.ts";
+import { CORE_AGENT_IDS } from "../../src/agents/agentTypes.ts";
+import { getAgentProfile } from "../../src/agents/AgentRegistry.ts";
 import {
   ACCESSORY_POOLS,
   buildAccessoryLayout,
@@ -89,8 +89,8 @@ function runRigTableChecks(reporter: TestReporter): void {
   );
   check(
     "every agent maps to a rig with a finite scale in 0.96-1.12",
-    AGENT_IDS.every((id) => {
-      const rig = rigFor(AGENT_BY_ID[id].role);
+    CORE_AGENT_IDS.every((id) => {
+      const rig = rigFor(getAgentProfile(id).role);
       return (
         Number.isFinite(rig.scale) && rig.scale >= 0.96 && rig.scale <= 1.12
       );

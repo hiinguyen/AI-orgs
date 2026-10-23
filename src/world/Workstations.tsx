@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { LOCATIONS } from "@/simulation/worldLayout";
 import { geometries, materials } from "./sharedResources";
 import { Desks } from "./Desks";
+import { BayDesks } from "./BayDesks";
 import { OperationsHub } from "./OperationsHub";
 import { MissionControl } from "./MissionControl";
 import { PlanningBoard } from "./PlanningBoard";
@@ -146,6 +147,7 @@ export function Workstations() {
   return (
     <group>
       <Desks />
+      <BayDesks />
       <OperationsHub />
       <MissionControl />
       <PlanningBoard />

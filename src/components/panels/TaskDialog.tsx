@@ -4,7 +4,7 @@ import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Shuffle, Sparkles, X } from "lucide-react";
 import type { AgentId } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import { commands } from "@/integrations/backendClient";
 import { useWorldStore } from "@/state/useWorldStore";
 import { DEMO_TASK } from "@/tasks/taskActions";
@@ -264,7 +264,7 @@ function TaskDialogForm({
             {preferredAgentId && (
               <p className="mt-3 rounded-lg border border-signal/20 bg-signal/[0.06] px-2.5 py-2 text-[11px] leading-4 text-mist-300">
                 Requested from{" "}
-                {AGENT_BY_ID[preferredAgentId].name} - routed via the
+                {getAgentProfile(preferredAgentId).name} - routed via the
                 Orchestrator so the full workflow still applies.
               </p>
             )}

@@ -8,7 +8,7 @@ import {
   LocateFixed,
   PauseCircle,
 } from "lucide-react";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
 import { PHASE_LABELS } from "@/tasks/taskTypes";
 import { useWorldStore } from "@/state/useWorldStore";
 import {
@@ -42,7 +42,7 @@ export function TaskDetails({ taskId }: { taskId: string }) {
   }
 
   const owner = task.assignedAgentId
-    ? AGENT_BY_ID[task.assignedAgentId]
+    ? getAgentProfile(task.assignedAgentId)
     : null;
   const rows = workflowRows(task);
   const progressColor = taskProgressColor(task);
@@ -122,7 +122,7 @@ export function TaskDetails({ taskId }: { taskId: string }) {
       <p className="eyebrow">Workflow</p>
       <ol className="mt-1.5 space-y-0.5">
         {rows.map((row) => {
-          const rowOwner = row.ownerId ? AGENT_BY_ID[row.ownerId] : null;
+          const rowOwner = row.ownerId ? getAgentProfile(row.ownerId) : null;
           const active = row.state === "current" || row.state === "failed";
           return (
             <li

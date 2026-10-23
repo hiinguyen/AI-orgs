@@ -4,10 +4,12 @@ import { useLayoutEffect, useRef } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { AgentId, Vec2 } from "@/agents/agentTypes";
-import { AGENT_BY_ID } from "@/agents/AgentRegistry";
+import { getAgentProfile } from "@/agents/AgentRegistry";
+import { liveColorIndex } from "@/agents/agentPalette";
+import { hashString } from "@/simulation/EventBus.ts";
 import { liveWorld } from "@/state/useWorldStore";
 import { reducedMotion } from "@/state/reducedMotion";
-import { agentVisuals, findAgentState } from "./agentVisuals";
+import { agentVisualFor, findAgentState } from "./agentVisuals";
 import {
   geometries,
   hoverRingMaterial,
@@ -131,8 +133,10 @@ export function PathTrail({
 }) {
   const dots = useRef<THREE.InstancedMesh>(null);
   const destination = useRef<THREE.Mesh>(null);
-  const phase = useRef((AGENT_BY_ID[agentId].seat * 0.137) % SPACING);
-  const profile = AGENT_BY_ID[agentId];
+  const profile = getAgentProfile(agentId);
+  // A deterministic phase per id keeps same-role live agents out of lockstep.
+  const phaseSeed = profile.kind === "core" ? profile.seat : hashString(agentId);
+  const phase = useRef((phaseSeed * 0.137 + liveColorIndex(agentId) * 0.041) % SPACING);
 
   useLayoutEffect(() => {
     const mesh = dots.current;
@@ -170,18 +174,12 @@ export function PathTrail({
         (phase.current + delta * (snapshot.speed || 1) * PHASE_SPEED) % SPACING;
     }
 
-    const visual = agentVisuals[agentId];
-    const placed = writeTrail(
-      mesh,
-      path,
-      visual.x,
-      visual.z,
-      phase.current,
-    );
+    const visual = agentVisualFor(agentId);
+    const placed = writeTrail(mesh, path, visual.x, visual.z, phase.current);
     mesh.count = placed;
     mesh.visible = placed > 0;
     mesh.instanceMatrix.needsUpdate = true;
-    writeDestination(ring, path, phase.current, profile.seat, calm);
+    writeDestination(ring, path, phase.current, phaseSeed, calm);
   });
 
   return (

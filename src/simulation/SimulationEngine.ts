@@ -1,6 +1,5 @@
 import type { AgentId, AgentProfile, AgentState } from "../agents/agentTypes.ts";
-import { AGENT_IDS } from "../agents/agentTypes.ts";
-import { AGENTS, AGENT_BY_ID, agentName } from "../agents/AgentRegistry.ts";
+import { AGENTS, agentName } from "../agents/AgentRegistry.ts";
 import { AgentController } from "../agents/AgentController.ts";
 import type { AgentEvent, AgentEventDraft } from "../events/eventTypes.ts";
 import { EventBus, createRng, hashString } from "./EventBus.ts";
@@ -44,17 +43,18 @@ function cloneTask(task: Task): Task {
 }
 
 function createInitialAgentState(profile: AgentProfile): AgentState {
-  const slot = slotFor(profile.home, profile.seat);
+  const home = profile.home ?? "hub";
+  const slot = slotFor(home, profile.seat);
   return {
     id: profile.id,
     status: "idle",
     activity: `${profile.name} is idle`,
     currentTaskId: null,
     progress: 0,
-    location: profile.home,
+    location: home,
     destination: null,
     position: { x: slot.x, z: slot.z },
-    heading: headingFor(profile.home, profile.seat),
+    heading: headingFor(home, profile.seat),
     path: [],
     facingAgentId: null,
     paused: false,
@@ -325,12 +325,8 @@ export class SimulationEngine {
       clock: roundClock(this.clock),
       status: this.status,
       speed: this.speed,
-      agents: AGENT_IDS.map((id) => {
-        const state = this.agents.get(id);
-        return state
-          ? cloneAgent(state)
-          : createInitialAgentState(AGENT_BY_ID[id]);
-      }),
+      profiles: AGENTS.map((profile) => ({ ...profile })),
+      agents: [...this.agents.values()].map(cloneAgent),
       tasks: this.orderedTasks().map(cloneTask),
       links: this.links.map((link) => ({ ...link })),
     };
@@ -352,7 +348,7 @@ export class SimulationEngine {
     for (const profile of AGENTS) {
       this.emit(
         "system.ready",
-        `${profile.name} is at the ${LOCATIONS[profile.home].label}`,
+        `${profile.name} is at the ${LOCATIONS[profile.home ?? "hub"].label}`,
         {
           agentId: profile.id,
           severity: "info",

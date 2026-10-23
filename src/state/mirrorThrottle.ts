@@ -10,6 +10,9 @@ type TimerHandle = ReturnType<typeof setTimeout>;
  * and task status signature. Everything here changes visible UI structure.
  */
 export function significantSignature(snapshot: WorldSnapshot): string {
+  const profiles = snapshot.profiles
+    .map((profile) => `${profile.id}:${profile.name}:${profile.role}:${profile.kind}`)
+    .join("|");
   const agents = snapshot.agents
     .map(
       (agent) =>
@@ -19,7 +22,7 @@ export function significantSignature(snapshot: WorldSnapshot): string {
   const tasks = snapshot.tasks
     .map((task) => `${task.id}:${task.phase}:${task.status}`)
     .join("|");
-  return `${snapshot.status}#${snapshot.speed}#${agents}#${tasks}`;
+  return `${snapshot.status}#${snapshot.speed}#${profiles}#${agents}#${tasks}`;
 }
 
 /**
@@ -28,6 +31,12 @@ export function significantSignature(snapshot: WorldSnapshot): string {
  * without causing a React render.
  */
 export function uiSignature(snapshot: WorldSnapshot): string {
+  const profiles = snapshot.profiles
+    .map(
+      (profile) =>
+        `${profile.id}:${profile.name}:${profile.role}:${profile.roleLabel}:${profile.color}:${profile.seat}:${profile.kind}`,
+    )
+    .join("|");
   const agents = snapshot.agents
     .map((agent) =>
       [
@@ -67,7 +76,7 @@ export function uiSignature(snapshot: WorldSnapshot): string {
       ].join(":"),
     )
     .join("|");
-  return `${snapshot.status}#${snapshot.speed}#${agents}#${tasks}`;
+  return `${snapshot.status}#${snapshot.speed}#${profiles}#${agents}#${tasks}`;
 }
 
 export interface ThrottledMirrorOptions {

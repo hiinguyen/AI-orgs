@@ -1,5 +1,5 @@
 import type { AgentId } from "@/agents/agentTypes";
-import { AGENT_IDS } from "@/agents/agentTypes";
+import { CORE_AGENT_IDS } from "@/agents/agentTypes";
 import { LABEL_SCALE_MIN } from "@/agents/agentMath";
 
 /**
@@ -21,7 +21,7 @@ export interface LabelAnchor {
 
 const anchors = new Map<AgentId, LabelAnchor>();
 
-for (const id of AGENT_IDS) {
+for (const id of CORE_AGENT_IDS) {
   anchors.set(id, { x: -1000, y: -1000, scale: LABEL_SCALE_MIN, onScreen: false });
 }
 
@@ -40,5 +40,19 @@ export function labelAnchorFor(id: AgentId): LabelAnchor {
   };
   anchors.set(id, created);
   return created;
+}
+
+/** Read-only lookup: never creates an anchor for an unknown or released id. */
+export function peekLabelAnchor(id: AgentId): LabelAnchor | undefined {
+  return anchors.get(id);
+}
+
+/** Drop an anchor when its agent despawns, so a long session cannot leak. */
+export function releaseLabelAnchor(id: AgentId): void {
+  anchors.delete(id);
+}
+
+export function labelAnchorCount(): number {
+  return anchors.size;
 }
 
