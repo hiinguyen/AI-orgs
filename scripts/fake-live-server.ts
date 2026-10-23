@@ -9,32 +9,19 @@
  * It has no dependencies (the repo installs no `ws` package): the handshake
  * and the text frames are implemented directly on node:net. It also exports
  * `startFakeLiveServer` so the headless checks can drive a real WebSocket
- * round trip without a browser.
+ * round trip without a browser. The scenario data (profiles, states, events,
+ * snapshots) lives in scripts/lib/fakeLiveScenario.ts.
  */
 import { createServer, type IncomingMessage } from "node:http";
 import type { Socket } from "node:net";
 import { pathToFileURL } from "node:url";
-import type {
-  AgentId,
-  AgentProfile,
-  AgentState,
-  Vec2,
-} from "../src/agents/agentTypes.ts";
-import { CORE_AGENTS } from "../src/agents/AgentRegistry.ts";
-import { colorForAgent } from "../src/agents/agentPalette.ts";
-import type { AgentEvent, EventSeverity } from "../src/events/eventTypes.ts";
+import type { AgentEvent } from "../src/events/eventTypes.ts";
 import type {
   CommLink,
   SimulationStatus,
-  WorldSnapshot,
 } from "../src/integrations/AgentBackend.ts";
 import { allocateBay, bayStand, routeToBay } from "../src/simulation/bays.ts";
-import {
-  headingFor,
-  route,
-  slotFor,
-} from "../src/simulation/worldLayout.ts";
-import type { Task } from "../src/tasks/taskTypes.ts";
+import { headingFor, route, slotFor } from "../src/simulation/worldLayout.ts";
 import {
   CLOSE_NORMAL,
   OPCODE_CLOSE,
@@ -45,6 +32,16 @@ import {
   readFrames,
   webSocketAccept,
 } from "./lib/miniWebSocket.ts";
+import {
+  advance,
+  buildAgentEvent,
+  buildWorldSnapshot,
+  createLiveAgent,
+  liveProfileFor,
+  taskFixture,
+  type AgentEventExtra,
+  type LiveAgent,
+} from "./lib/fakeLiveScenario.ts";
 
 const ALLOWED_ORIGIN_HOSTS: ReadonlySet<string> = new Set([
   "localhost",
@@ -64,14 +61,6 @@ function isAllowedOrigin(origin: string | undefined): boolean {
     return false;
   }
 }
-
-const LIVE_ROLES = [
-  "researcher",
-  "product_manager",
-  "engineer",
-  "qa",
-  "reviewer",
-] as const;
 
 export interface FakeLiveServerOptions {
   /** 0 picks a free port; the resolved port is returned. */
@@ -99,102 +88,9 @@ export interface FakeLiveServer {
   close(): Promise<void>;
 }
 
-interface LiveAgent {
-  id: AgentId;
-  profile: AgentProfile;
-  state: AgentState;
-  phase: "walk-to-bay" | "work" | "emote" | "walk-home" | "fade";
-  timer: number;
-  bay: number | null;
-  waiting: boolean;
-  spawnedAt: number;
-  outcome: "success" | "error";
-  path: Vec2[];
-  target: Vec2;
-  linkAt: number;
-}
-
 interface Client {
   socket: Socket;
   buffer: Buffer;
-}
-
-/** Move a point along a routed path at `speed`, returning the consumed step. */
-function advance(
-  position: Vec2,
-  path: Vec2[],
-  budget: number,
-): { moved: number; heading: number | null } {
-  let remaining = budget;
-  let moved = 0;
-  let heading: number | null = null;
-  while (remaining > 1e-7 && path.length > 0) {
-    const next = path[0];
-    const dx = next.x - position.x;
-    const dz = next.z - position.z;
-    const step = Math.hypot(dx, dz);
-    if (step <= 1e-7) {
-      path.shift();
-      continue;
-    }
-    heading = Math.atan2(dx, dz);
-    if (step <= remaining) {
-      position.x = next.x;
-      position.z = next.z;
-      path.shift();
-      remaining -= step;
-      moved += step;
-    } else {
-      const ratio = remaining / step;
-      position.x += dx * ratio;
-      position.z += dz * ratio;
-      moved += remaining;
-      remaining = 0;
-    }
-  }
-  return { moved, heading };
-}
-
-function coreState(profile: AgentProfile): AgentState {
-  const home = profile.home ?? "hub";
-  const slot = slotFor(home, profile.seat);
-  return {
-    id: profile.id,
-    status: "idle",
-    activity: `${profile.name} is idle`,
-    currentTaskId: null,
-    progress: 0,
-    location: home,
-    destination: null,
-    position: { x: slot.x, z: slot.z },
-    heading: headingFor(home, profile.seat),
-    path: [],
-    facingAgentId: null,
-    paused: false,
-  };
-}
-
-function taskFixture(): Task {
-  return {
-    id: "T-001",
-    title: "Fake live task",
-    description: "A placeholder returned by the fake live server.",
-    priority: "medium",
-    status: "queued",
-    phase: "queued",
-    assignedAgentId: null,
-    progress: 0,
-    createdAt: 0,
-    updatedAt: 0,
-    completedAt: null,
-    iteration: 0,
-    subtasks: [],
-    findings: [],
-    history: [],
-    isDemo: false,
-    preferredAgentId: null,
-    blockedReason: null,
-  };
 }
 
 export async function startFakeLiveServer(
@@ -240,30 +136,13 @@ export async function startFakeLiveServer(
   const emit = (
     type: AgentEvent["type"],
     message: string,
-    extra: {
-      agentId?: AgentId;
-      targetAgentId?: AgentId;
-      severity?: EventSeverity;
-      feed?: boolean;
-      metadata?: Record<string, unknown>;
-    } = {},
+    extra: AgentEventExtra = {},
   ): void => {
     eventSeq += 1;
-    const event: AgentEvent = {
-      id: `live-evt-${eventSeq}`,
-      type,
-      timestamp: Date.now(),
-      simTime: Math.round(clock * 1000) / 1000,
-      message,
-      severity: extra.severity ?? "info",
-      feed: extra.feed ?? true,
-      ...(extra.agentId === undefined ? {} : { agentId: extra.agentId }),
-      ...(extra.targetAgentId === undefined
-        ? {}
-        : { targetAgentId: extra.targetAgentId }),
-      ...(extra.metadata === undefined ? {} : { metadata: extra.metadata }),
-    };
-    broadcast({ type: "event", event });
+    broadcast({
+      type: "event",
+      event: buildAgentEvent(eventSeq, clock, type, message, extra),
+    });
   };
 
   const occupiedBays = (): Set<number> => {
@@ -325,62 +204,8 @@ export async function startFakeLiveServer(
       return;
     }
     spawnSeq += 1;
-    // The first burst is four agents of the same role, the case that used to
-    // collapse into one robot before phase 9.
-    const role =
-      spawnSeq <= 4 ? "reviewer" : LIVE_ROLES[spawnSeq % LIVE_ROLES.length];
-    const id = `live-${String(spawnSeq).padStart(2, "0")}`;
-    const profile: AgentProfile = {
-      id,
-      name:
-        role === "reviewer"
-          ? `code-reviewer #${spawnSeq}`
-          : `${role.replaceAll("_", "-")} #${spawnSeq}`,
-      role,
-      roleLabel:
-        role === "reviewer"
-          ? "Code Reviewer"
-          : role === "qa"
-            ? "QA Engineer"
-            : role === "product_manager"
-              ? "Product Manager"
-              : role === "researcher"
-                ? "Researcher"
-                : "Software Engineer",
-      tagline: "Live subagent over the fake WebSocket backend",
-      color: colorForAgent(id),
-      seat: spawnSeq % 6,
-      kind: "live",
-    };
-    const hub = slotFor("hub", 0);
-    const state: AgentState = {
-      id,
-      status: "idle",
-      activity: "Arrived at the Operations Hub",
-      currentTaskId: null,
-      progress: 0,
-      location: "hub",
-      destination: null,
-      position: { x: hub.x, z: hub.z },
-      heading: headingFor("hub", 0),
-      path: [],
-      facingAgentId: null,
-      paused: false,
-    };
-    const agent: LiveAgent = {
-      id,
-      profile,
-      state,
-      phase: "walk-to-bay",
-      timer: 0,
-      bay: null,
-      waiting: false,
-      spawnedAt: clock,
-      outcome: "success",
-      path: [],
-      target: hub,
-      linkAt: 0,
-    };
+    const profile = liveProfileFor(spawnSeq);
+    const agent = createLiveAgent(profile, clock);
 
     const bay = allocateBay(occupiedBays());
     if (bay === null) {
@@ -402,7 +227,7 @@ export async function startFakeLiveServer(
     }
 
     emit("agent.spawned", `${profile.name} joined the Dispatch Floor`, {
-      agentId: id,
+      agentId: profile.id,
       severity: "info",
       feed: true,
       metadata: {
@@ -537,26 +362,8 @@ export async function startFakeLiveServer(
     }
   };
 
-  const snapshot = (): WorldSnapshot => ({
-    clock: Math.round(clock * 1000) / 1000,
-    status,
-    speed,
-    profiles: [
-      ...CORE_AGENTS.map((profile) => ({ ...profile })),
-      ...live.map((agent) => ({ ...agent.profile })),
-    ],
-    agents: [
-      ...CORE_AGENTS.map((profile) => coreState(profile)),
-      ...live.map((agent) => ({
-        ...agent.state,
-        position: { ...agent.state.position },
-        path: agent.state.path.map((point) => ({ ...point })),
-        paused: agent.state.paused || paused,
-      })),
-    ],
-    tasks: [],
-    links: links.filter((link) => link.endsAt > clock).map((link) => ({ ...link })),
-  });
+  const snapshot = () =>
+    buildWorldSnapshot({ clock, status, speed, paused, live, links });
 
   const broadcastSnapshot = (): void => {
     broadcast({ type: "snapshot", snapshot: snapshot() });

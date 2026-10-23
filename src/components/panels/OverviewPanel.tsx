@@ -35,13 +35,13 @@ export function OverviewPanel() {
     <div className="px-4 py-3.5">
       {tasks.length === 0 && (
         <section className="surface-quiet p-4">
-          <p className="eyebrow text-signal">Demo</p>
+          {!live && <p className="eyebrow text-signal">Demo</p>}
           <h3 className="mt-1.5 text-[15px] font-semibold tracking-tight text-mist-100">
             {live ? "Start a workflow" : "Watch the team ship a feature"}
           </h3>
           <p className="mt-1.5 text-[12px] leading-5 text-mist-300">
             {live
-              ? "Run the demo or load the sprint to send work to the connected service."
+              ? "Run demo resets the connected service, starts it and submits one authentication task. Load sprint starts or resumes it and submits the 8-task sprint."
               : "Orion delegates a JWT authentication task to Piper, Iris, Kai, Quinn and Rex, then the team plans, researches, builds, fails a test, fixes it and gets it reviewed."}
           </p>
           <div className="mt-3 flex flex-wrap gap-1.5">

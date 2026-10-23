@@ -37,7 +37,8 @@ class FakeSocket {
   onmessage: ((message: { data: unknown }) => void) | null = null;
   readonly sent: string[] = [];
 
-  constructor(_url: string) {
+  constructor(url: string) {
+    void url;
     FakeSocket.all.push(this);
     FakeSocket.last = this;
   }

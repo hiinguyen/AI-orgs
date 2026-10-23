@@ -30,6 +30,7 @@ export function TaskDetails({ taskId }: { taskId: string }) {
     state.world?.tasks.find((entry) => entry.id === taskId),
   );
   const focusAgent = useWorldStore((state) => state.focusAgent);
+  const simulated = useWorldStore((state) => state.backend.simulated);
 
   if (!task) {
     return (
@@ -276,7 +277,9 @@ export function TaskDetails({ taskId }: { taskId: string }) {
       )}
 
       <p className="mt-4 border-t border-white/[0.06] pt-2.5 text-[9.5px] leading-4 text-mist-500">
-        Simulated output from canned templates - no model inference.
+        {simulated
+          ? "Simulated output from canned templates - no model inference."
+          : "Details reported by the connected service."}
       </p>
     </div>
   );
