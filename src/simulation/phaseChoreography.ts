@@ -83,6 +83,12 @@ export interface PhaseChoreographyContext {
  * for the owning agent, then applies the next workflow signal. All decisions
  * are deterministic; the engine owns the task map, clock and controllers.
  */
+/** Items shown at `progress` (0..1): the first appears with the first tick. */
+export function revealCount(total: number, progress: number): number {
+  if (progress <= 0) return 0;
+  return Math.min(total, Math.ceil(progress * total - 1e-9));
+}
+
 export class PhaseChoreography {
   private readonly ctx: PhaseChoreographyContext;
 
@@ -190,9 +196,11 @@ export class PhaseChoreography {
         kind: "work",
         duration: durations.breakdown,
         status: "working",
-        activity: `Breaking "${label}" into task cards`,
-        onProgress: (progress) =>
-          this.ctx.setProgress(task.id, "planning", progress),
+        activity: `Planning "${label}" at the sprint board`,
+        onProgress: (progress) => {
+          this.ctx.setProgress(task.id, "planning", progress);
+          this.revealSubtasks(task.id, meta.template.subtasks, progress);
+        },
         onDone: () => {
           const subtasks: Subtask[] = meta.template.subtasks.map(
             (title, index) => ({
@@ -241,6 +249,43 @@ export class PhaseChoreography {
     ]);
   }
 
+  /**
+   * Cards appear one by one as the breakdown progresses, so the sprint board
+   * fills while Piper works. The final `onDone` write is the full set.
+   */
+  private revealSubtasks(
+    taskId: string,
+    titles: readonly string[],
+    progress: number,
+  ): void {
+    const count = revealCount(titles.length, progress);
+    this.ctx.updateTask(taskId, (current) => {
+      if (current.subtasks.length >= count) return current;
+      return {
+        ...current,
+        subtasks: titles.slice(0, count).map((title, index) => ({
+          id: `${taskId}-${index + 1}`,
+          title,
+          done: false,
+        })),
+      };
+    });
+  }
+
+  /** Findings land on the research board one by one while Iris works. */
+  private revealFindings(
+    taskId: string,
+    findings: readonly string[],
+    progress: number,
+  ): void {
+    const count = revealCount(findings.length, progress);
+    this.ctx.updateTask(taskId, (current) =>
+      current.findings.length >= count
+        ? current
+        : { ...current, findings: findings.slice(0, count) },
+    );
+  }
+
   private scheduleResearch(task: Task): void {
     const controller = this.ownerController(task);
     if (!controller) return;
@@ -252,16 +297,18 @@ export class PhaseChoreography {
     controller.enqueue([
       {
         kind: "move",
-        to: "research",
-        activity: `Walking to the ${LOCATIONS.research.label}`,
+        to: "researchBoard",
+        activity: `Walking to the ${LOCATIONS.researchBoard.label}`,
       },
       {
         kind: "work",
         duration: durations.research,
         status: "working",
-        activity: `Researching "${label}"`,
-        onProgress: (progress) =>
-          this.ctx.setProgress(task.id, "research", progress),
+        activity: `Researching "${label}" at the research board`,
+        onProgress: (progress) => {
+          this.ctx.setProgress(task.id, "research", progress);
+          this.revealFindings(task.id, meta.template.findings, progress);
+        },
         onDone: () => {
           this.ctx.updateTask(task.id, (current) => ({
             ...current,

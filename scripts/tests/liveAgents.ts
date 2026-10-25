@@ -42,6 +42,7 @@ import {
 import { profileFor, useWorldStore } from "../../src/state/useWorldStore.ts";
 import { SimulationEngine } from "../../src/simulation/SimulationEngine.ts";
 import {
+  WAITING_LOCATION,
   allocateBay,
   bayAt,
   bayDesk,
@@ -89,7 +90,7 @@ function makeLiveState(index: number): AgentState {
     activity: "waiting",
     currentTaskId: null,
     progress: 0,
-    location: "lounge",
+    location: "collab",
     destination: null,
     position: { x: 0, z: 8 },
     heading: 0,
@@ -161,14 +162,10 @@ function runBaySuite(reporter: TestReporter): void {
     ),
   );
   check(
-    "bay stands and desks stay outside both collaboration rings",
+    "bay stands and desks stay outside the collaboration ring",
     BAY_STANDS.concat(BAY_DESKS).every((point) => {
       const collab = LOCATIONS.collab.center ?? { x: -5, z: 5.6 };
-      const lounge = LOCATIONS.lounge.center ?? { x: 7.5, z: 6.2 };
-      return (
-        distanceToRing(point, collab, 1.75) > 0.35 &&
-        distanceToRing(point, lounge, 2.1) > 0.35
-      );
+      return distanceToRing(point, collab, 1.75) > 0.35;
     }),
   );
   check(
@@ -187,11 +184,8 @@ function runBaySuite(reporter: TestReporter): void {
     BAY_STANDS.every((stand, index) => {
       const points = routeToBay({ x: 0, z: 1.15 }, index);
       const collab = LOCATIONS.collab.center ?? { x: -5, z: 5.6 };
-      const lounge = LOCATIONS.lounge.center ?? { x: 7.5, z: 6.2 };
       const clearOfRings = points.every(
-        (point) =>
-          distanceToRing(point, collab, 1.75) > 0.2 &&
-          distanceToRing(point, lounge, 2.1) > 0.2,
+        (point) => distanceToRing(point, collab, 1.75) > 0.2,
       );
       const halfWidth = BAY_DESK_WIDTH / 2 + 0.1;
       const halfDepth = BAY_DESK_DEPTH / 2 + 0.1;
@@ -496,7 +490,7 @@ async function runLifecycleSuite(reporter: TestReporter): Promise<void> {
     );
     if (live.length === 14) {
       const waiting = live.filter(
-        (agent) => agent.location === "lounge" && agent.path.length === 0,
+        (agent) => agent.location === WAITING_LOCATION && agent.path.length === 0,
       );
       const inBays = live.filter(
         (agent) =>
@@ -572,7 +566,7 @@ async function runLifecycleSuite(reporter: TestReporter): Promise<void> {
 
     await waitFor(() => sawBaysFilled, 5000, "12 bays and 2 waiters");
     check(
-      "twelve agents take bays and the extra two wait at the lounge",
+      "twelve agents take bays and the extra two wait at the collaboration table",
       sawBaysFilled && waitingIds.length === 2,
     );
 

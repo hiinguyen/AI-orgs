@@ -3,11 +3,43 @@
  * No I/O, no logging and no raw payload values beyond the short, redacted
  * activity text that the UI is meant to show.
  */
-import type { AgentProfile, AgentRole } from "../src/agents/agentTypes.ts";
+import { CORE_AGENT_IDS } from "../src/agents/agentTypes.ts";
+import type { AgentId, AgentProfile, AgentRole, AgentStatus } from "../src/agents/agentTypes.ts";
 import { colorForAgent } from "../src/agents/agentPalette.ts";
+import { CORE_AGENTS } from "../src/agents/AgentRegistry.ts";
 import { LiveStage } from "../src/simulation/liveStage.ts";
 import type { HookPayload } from "./hooks.ts";
 import { redact, summaryFromMessage, toolTarget, truncate } from "./redact.ts";
+
+const ORION: AgentId = "orion";
+
+/** How long a core agent shows a finished subagent's success. */
+const SUCCESS_FLASH_MS = 2500;
+/** How long a core agent shows a lost or failed subagent's error. */
+const ERROR_FLASH_MS = 2500;
+/** How long a core agent shows a failed tool call. */
+const TOOL_FAILURE_FLASH_MS = 1500;
+
+/** Core agent that mirrors the live agents of each role, from the registry. */
+export const CORE_AGENT_FOR_ROLE: Record<AgentRole, AgentId> = coreAgentForRole();
+
+function coreAgentForRole(): Record<AgentRole, AgentId> {
+  const find = (role: AgentRole): AgentId => {
+    const profile = CORE_AGENTS.find(
+      (core) => core.role === role && CORE_AGENT_IDS.includes(core.id),
+    );
+    if (profile === undefined) throw new Error(`no core agent for role ${role}`);
+    return profile.id;
+  };
+  return {
+    orchestrator: find("orchestrator"),
+    researcher: find("researcher"),
+    product_manager: find("product_manager"),
+    engineer: find("engineer"),
+    qa: find("qa"),
+    reviewer: find("reviewer"),
+  };
+}
 
 export interface BridgeMappingState {
   /** Sessions that already produced system.started. */
@@ -22,6 +54,10 @@ export interface BridgeMappingState {
   sessionAgents: Map<string, Set<string>>;
   /** Reverse lookup used when an agent stops. */
   agentSession: Map<string, string>;
+  /** Role of every tracked live agent, to find the core agent it mirrors. */
+  agentRole: Map<string, AgentRole>;
+  /** Core id to the live agent ids currently mirrored onto it. */
+  coreOwners: Map<AgentId, Set<string>>;
 }
 
 export function createMappingState(): BridgeMappingState {
@@ -32,6 +68,8 @@ export function createMappingState(): BridgeMappingState {
     lastSeen: new Map<string, number>(),
     sessionAgents: new Map<string, Set<string>>(),
     agentSession: new Map<string, string>(),
+    agentRole: new Map<string, AgentRole>(),
+    coreOwners: new Map<AgentId, Set<string>>(),
   };
 }
 
@@ -42,6 +80,8 @@ export function resetMappingState(state: BridgeMappingState): void {
   state.lastSeen.clear();
   state.sessionAgents.clear();
   state.agentSession.clear();
+  state.agentRole.clear();
+  state.coreOwners.clear();
 }
 
 const ROLE_LABELS: Record<AgentRole, string> = {
@@ -137,8 +177,104 @@ export function takeAgentDescription(
   return value;
 }
 
-function setOrion(stage: LiveStage, activity: string, status: "thinking" | "working" | "idle"): void {
-  stage.setActivity("orion", activity, status);
+/** Longest working directory folder name used in a session robot name. */
+const MAX_SESSION_LABEL_LENGTH = 40;
+const SESSION_ORDINAL_PREFIX = "session:";
+
+/**
+ * Next spawn ordinal for a key. Nothing is stored until `commitOrdinal`, so a
+ * spawn dropped at the live cap does not consume a number.
+ */
+function nextOrdinal(state: BridgeMappingState, key: string): number {
+  return (state.ordinals.get(key) ?? 0) + 1;
+}
+
+function commitOrdinal(
+  state: BridgeMappingState,
+  key: string,
+  ordinal: number,
+): void {
+  state.ordinals.delete(key);
+  if (state.ordinals.size >= MAX_ORDINAL_KEYS) {
+    const oldest = state.ordinals.keys().next();
+    if (oldest.done !== true) state.ordinals.delete(oldest.value);
+  }
+  state.ordinals.set(key, ordinal);
+}
+
+function folderLabel(cwd: string): string {
+  const parts = cwd.split(/[\\/]/).filter((part) => part.length > 0);
+  const last = parts[parts.length - 1] ?? "";
+  const masked = truncate(redact(last), MAX_SESSION_LABEL_LENGTH);
+  return masked.length > 0 ? masked : "session";
+}
+
+/**
+ * The live robot of a Claude Code session, spawned on first use so a bridge
+ * restarted mid-session still catches up. Falls back to Orion when the live
+ * cap is full.
+ */
+function sessionActor(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  payload: HookPayload,
+  now: number,
+): AgentId {
+  const id = payload.sessionId;
+  if (isOwnRobot(stage, state, id)) {
+    state.lastSeen.set(id, now);
+    return id;
+  }
+  // A core id, an unrelated live agent or a departing robot: never spawn.
+  if (stage.has(id) || CORE_AGENT_IDS.includes(id)) return ORION;
+  const key = `${SESSION_ORDINAL_PREFIX}${folderLabel(payload.cwd).toLowerCase()}`;
+  const ordinal = nextOrdinal(state, key);
+  const profile: AgentProfile = {
+    id,
+    name: `${folderLabel(payload.cwd)} #${ordinal}`,
+    role: "orchestrator",
+    roleLabel: ROLE_LABELS.orchestrator,
+    tagline: "Live Claude Code session",
+    color: colorForAgent(id),
+    seat: (ordinal - 1) % 6,
+    kind: "live",
+  };
+  if (stage.spawn(profile, { workSeconds: 0 }) === null) return ORION;
+  commitOrdinal(state, key, ordinal);
+  trackAgent(state, id, id);
+  registerMirror(state, id, profile.role);
+  state.lastSeen.set(id, now);
+  return id;
+}
+
+/** The session robot if it exists, otherwise Orion. Never spawns. */
+function findSessionActor(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  payload: HookPayload,
+): AgentId {
+  return isOwnRobot(stage, state, payload.sessionId) ? payload.sessionId : ORION;
+}
+
+/** True when the live agent with this id is the tracked robot of that session. */
+function isOwnRobot(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  sessionId: string,
+): boolean {
+  return state.agentSession.get(sessionId) === sessionId && stage.has(sessionId);
+}
+
+/** Keep a session robot from being reaped while its subagents are active. */
+function touchSession(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  payload: HookPayload,
+  now: number,
+): void {
+  if (isOwnRobot(stage, state, payload.sessionId)) {
+    state.lastSeen.set(payload.sessionId, now);
+  }
 }
 
 function isAgentTool(toolName: string | null): boolean {
@@ -167,8 +303,115 @@ function trackAgent(
   state.sessionAgents.set(sessionId, agents);
 }
 
-/** Drop an agent from the session and reaper bookkeeping. */
-export function forgetAgent(state: BridgeMappingState, agentId: string): void {
+/** Register a live agent as an owner of the core agent for its role. */
+function registerMirror(
+  state: BridgeMappingState,
+  agentId: string,
+  role: AgentRole,
+): void {
+  const coreId = CORE_AGENT_FOR_ROLE[role];
+  state.agentRole.set(agentId, role);
+  const owners = state.coreOwners.get(coreId) ?? new Set<string>();
+  owners.add(agentId);
+  state.coreOwners.set(coreId, owners);
+}
+
+/** Core agent mirroring this live agent, or null when it is not registered. */
+function mirrorTarget(state: BridgeMappingState, agentId: string): AgentId | null {
+  const role = state.agentRole.get(agentId);
+  return role === undefined ? null : CORE_AGENT_FOR_ROLE[role];
+}
+
+/** Stop mirroring an agent; the core agent goes idle with its last owner. */
+function releaseMirror(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  agentId: string,
+): void {
+  const coreId = mirrorTarget(state, agentId);
+  state.agentRole.delete(agentId);
+  if (coreId === null) return;
+  const owners = state.coreOwners.get(coreId);
+  if (owners === undefined) return;
+  owners.delete(agentId);
+  if (owners.size > 0) return;
+  state.coreOwners.delete(coreId);
+  setCoreIdle(stage, coreId);
+}
+
+/** Put a core agent back to its default idle activity. */
+function setCoreIdle(stage: LiveStage, coreId: AgentId): void {
+  const core = CORE_AGENTS.find((profile) => profile.id === coreId);
+  if (core !== undefined) stage.setActivity(coreId, `${core.name} is idle`, "idle");
+}
+
+/** True while a live agent of this role mirrors onto the core agent. */
+function hasMirrorOwners(state: BridgeMappingState, coreId: AgentId): boolean {
+  return (state.coreOwners.get(coreId)?.size ?? 0) > 0;
+}
+
+/**
+ * Update a live agent and the core agent that mirrors its role. A null
+ * activity changes only the status. Several owners of a role are last-writer-
+ * wins (text and status may come from different owners on status-only updates).
+ */
+function setLiveActivity(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  agentId: AgentId,
+  activity: string | null,
+  status: AgentStatus,
+): void {
+  const coreId = mirrorTarget(state, agentId);
+  if (activity === null) {
+    stage.setStatusFor(agentId, status);
+    if (coreId !== null) stage.setStatusFor(coreId, status);
+    return;
+  }
+  stage.setActivity(agentId, activity, status);
+  if (coreId !== null) stage.setActivity(coreId, activity, status);
+}
+
+/**
+ * Flash the core agent mirroring this live agent with a transient outcome.
+ * Must run before `releaseMirror`, which forgets the role. No-op when the
+ * agent is not mirrored; a core agent acting for itself (the Orion fallback
+ * driver) is flashed directly.
+ */
+function flashOutcome(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  agentId: string,
+  status: "success" | "error",
+  text: string,
+  durationMs: number,
+): void {
+  const coreId =
+    mirrorTarget(state, agentId) ??
+    (CORE_AGENT_IDS.includes(agentId) ? agentId : null);
+  if (coreId !== null) stage.flashCore(coreId, status, text, durationMs);
+}
+
+/** Drop an agent from the session, reaper and core mirror bookkeeping. */
+export function forgetAgent(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  agentId: string,
+): void {
+  // An agent finished as an error (for example "Lost contact") flashes its
+  // core agent here, the one path every finish goes through.
+  const finished = stage.getAgent(agentId);
+  if (finished !== null && finished.outcome === "error") {
+    flashOutcome(
+      stage,
+      state,
+      agentId,
+      "error",
+      finished.state.activity,
+      ERROR_FLASH_MS,
+    );
+  }
+  releaseMirror(stage, state, agentId);
   const sessionId = state.agentSession.get(agentId);
   state.agentSession.delete(agentId);
   state.lastSeen.delete(agentId);
@@ -183,9 +426,11 @@ function handleSessionStart(
   stage: LiveStage,
   state: BridgeMappingState,
   payload: HookPayload,
+  now: number,
 ): void {
   stage.setStatus("running");
-  setOrion(stage, "Claude Code session started", "thinking");
+  const actor = sessionActor(stage, state, payload, now);
+  setLiveActivity(stage, state, actor, "Claude Code session started", "thinking");
   if (state.startedSessions.has(payload.sessionId)) return;
   if (state.startedSessions.size >= MAX_STARTED_SESSIONS) {
     const oldest = state.startedSessions.values().next();
@@ -203,24 +448,28 @@ function handleSessionEnd(
   state: BridgeMappingState,
   payload: HookPayload,
 ): void {
+  const hadRobot = isOwnRobot(stage, state, payload.sessionId);
   const agents = state.sessionAgents.get(payload.sessionId);
   if (agents !== undefined) {
     for (const id of agents) {
       stage.finish(id, "success");
-      forgetAgent(state, id);
+      forgetAgent(stage, state, id);
     }
     state.sessionAgents.delete(payload.sessionId);
   }
-  setOrion(stage, "Idle", "idle");
+  // Orion is only idle when no live session robot still mirrors onto it.
+  if (!hadRobot && !hasMirrorOwners(state, ORION)) setCoreIdle(stage, ORION);
 }
 
 function handleMainTool(
   stage: LiveStage,
   state: BridgeMappingState,
   payload: HookPayload,
+  now: number,
 ): void {
   const target = toolTarget(payload.toolName ?? "tool", payload.toolInput, payload.cwd);
-  setOrion(stage, `Tool: ${target}`, "working");
+  const actor = sessionActor(stage, state, payload, now);
+  setLiveActivity(stage, state, actor, `Tool: ${target}`, "working");
   if (!isAgentTool(payload.toolName)) return;
   const subagentType = readString(payload.toolInput, "subagent_type");
   const description = readString(payload.toolInput, "description");
@@ -239,9 +488,13 @@ function handleSubagentStart(
   // Claude Code's own internal agents announce an empty agent_type.
   if (payload.agentType === null || payload.agentType.length === 0) return;
   if (stage.has(payload.agentId)) return;
+  // A core id is never a live agent, like a session id (see sessionActor).
+  if (CORE_AGENT_IDS.includes(payload.agentId)) return;
 
+  // Spawn the parent first so a bridge restarted mid-session still has it.
+  const parent = sessionActor(stage, state, payload, now);
   const key = typeKey(payload.agentType);
-  const ordinal = (state.ordinals.get(key) ?? 0) + 1;
+  const ordinal = nextOrdinal(state, key);
 
   const role = roleForAgentType(payload.agentType);
   const name = truncate(`${payload.agentType} #${ordinal}`, 60);
@@ -258,42 +511,68 @@ function handleSubagentStart(
   const agent = stage.spawn(profile, { workSeconds: 0 });
   if (agent === null) return;
   // Only a spawn that succeeded consumes the ordinal, so names stay gapless.
-  state.ordinals.delete(key);
-  if (state.ordinals.size >= MAX_ORDINAL_KEYS) {
-    const oldest = state.ordinals.keys().next();
-    if (oldest.done !== true) state.ordinals.delete(oldest.value);
-  }
-  state.ordinals.set(key, ordinal);
+  commitOrdinal(state, key, ordinal);
 
   trackAgent(state, payload.sessionId, payload.agentId);
+  registerMirror(state, payload.agentId, role);
   state.lastSeen.set(payload.agentId, now);
 
   const description = takeAgentDescription(state, payload.agentType);
-  stage.setActivity(
+  setLiveActivity(
+    stage,
+    state,
     payload.agentId,
     description ?? `Started as ${payload.agentType}`,
     "thinking",
   );
-  stage.link("orion", payload.agentId, "assign");
+  stage.link(parent, payload.agentId, "assign");
 }
 
 function handleSubagentStop(
   stage: LiveStage,
   state: BridgeMappingState,
   payload: HookPayload,
+  now: number,
 ): void {
   if (payload.agentId === null) return;
   if (payload.agentType === null || payload.agentType.length === 0) return;
   if (!stage.has(payload.agentId)) return;
 
   const summary = summaryFromMessage(payload.lastAssistantMessage);
+  const coreId = mirrorTarget(state, payload.agentId);
+  const coreName = CORE_AGENTS.find((core) => core.id === coreId)?.name ?? "Agent";
+  flashOutcome(
+    stage,
+    state,
+    payload.agentId,
+    "success",
+    summary ?? `${coreName}: done`,
+    SUCCESS_FLASH_MS,
+  );
   stage.finish(
     payload.agentId,
     "success",
     summary === null ? {} : { activity: summary },
   );
-  stage.link(payload.agentId, "orion", "report");
-  forgetAgent(state, payload.agentId);
+  const ownerId = state.agentSession.get(payload.agentId);
+  const owner = ownerId !== undefined && stage.has(ownerId) ? ownerId : ORION;
+  touchSession(stage, state, payload, now);
+  stage.link(payload.agentId, owner, "report");
+  forgetAgent(stage, state, payload.agentId);
+}
+
+function handleStop(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  payload: HookPayload,
+): void {
+  const actor = findSessionActor(stage, state, payload);
+  if (actor !== ORION) {
+    setLiveActivity(stage, state, actor, "Idle", "idle");
+    return;
+  }
+  // The Orion fallback must not undo a session robot that Orion mirrors.
+  if (!hasMirrorOwners(state, ORION)) setCoreIdle(stage, ORION);
 }
 
 /** Apply one validated hook. Unknown events have no effect. */
@@ -305,37 +584,53 @@ export function applyHook(
 ): void {
   switch (payload.eventName) {
     case "SessionStart":
-      handleSessionStart(stage, state, payload);
+      handleSessionStart(stage, state, payload, now);
       return;
     case "SessionEnd":
       handleSessionEnd(stage, state, payload);
       return;
     case "UserPromptSubmit":
+      touchSession(stage, state, payload, now);
       return;
     case "PreToolUse":
       if (payload.agentId === null) {
-        handleMainTool(stage, state, payload);
+        handleMainTool(stage, state, payload, now);
       } else if (stage.has(payload.agentId)) {
+        touchSession(stage, state, payload, now);
         state.lastSeen.set(payload.agentId, now);
         const target = toolTarget(
           payload.toolName ?? "tool",
           payload.toolInput,
           payload.cwd,
         );
-        stage.setActivity(payload.agentId, `Tool: ${target}`, "working");
+        setLiveActivity(stage, state, payload.agentId, `Tool: ${target}`, "working");
       }
       return;
     case "PostToolUse":
+      touchSession(stage, state, payload, now);
       if (payload.agentId !== null && stage.has(payload.agentId)) {
         state.lastSeen.set(payload.agentId, now);
-        stage.setStatusFor(payload.agentId, "thinking");
+        setLiveActivity(stage, state, payload.agentId, null, "thinking");
       }
       return;
     case "PostToolUseFailure":
+      touchSession(stage, state, payload, now);
+      // Like the other tool hooks, an agent_id that is not a live robot
+      // (including a core id) is ignored rather than attributed elsewhere.
+      if (payload.agentId === null || stage.has(payload.agentId)) {
+        flashOutcome(
+          stage,
+          state,
+          payload.agentId ?? findSessionActor(stage, state, payload),
+          "error",
+          "Tool failed",
+          TOOL_FAILURE_FLASH_MS,
+        );
+      }
       if (payload.agentId !== null && stage.has(payload.agentId)) {
         state.lastSeen.set(payload.agentId, now);
         const tool = truncate(payload.toolName ?? "tool", 40);
-        stage.setActivity(payload.agentId, `Tool failed: ${tool}`, "working");
+        setLiveActivity(stage, state, payload.agentId, `Tool failed: ${tool}`, "working");
         stage.emit("agent.message", `Tool failed: ${tool}`, {
           agentId: payload.agentId,
           severity: "warning",
@@ -347,10 +642,11 @@ export function applyHook(
       handleSubagentStart(stage, state, payload, now);
       return;
     case "SubagentStop":
-      handleSubagentStop(stage, state, payload);
+      handleSubagentStop(stage, state, payload, now);
       return;
     case "Stop":
-      setOrion(stage, "Idle", "idle");
+      touchSession(stage, state, payload, now);
+      handleStop(stage, state, payload);
       return;
   }
 }

@@ -11,7 +11,8 @@ import { forgetAgent, type BridgeMappingState } from "./mapping.ts";
 export const ORPHAN_TIMEOUT_MS = 10 * 60 * 1000;
 
 /**
- * Finish every tracked agent whose last hook is older than the timeout.
+ * Finish every tracked agent whose last hook is older than the timeout. A
+ * session robot finishes as a quiet success, a subagent as an error.
  * Returns the ids that were asked to finish, in tracking order. A reaped agent
  * keeps its error emote and walk home when a client is watching; a caller with
  * no connected client can remove the returned ids immediately to free capacity.
@@ -26,11 +27,16 @@ export function reapOrphans(
   for (const [agentId, lastSeen] of state.lastSeen) {
     if (now - lastSeen < timeoutMs) continue;
     if (!stage.has(agentId)) {
-      forgetAgent(state, agentId);
+      forgetAgent(stage, state, agentId);
       continue;
     }
-    stage.finish(agentId, "error", { activity: "Lost contact" });
-    forgetAgent(state, agentId);
+    if (state.agentSession.get(agentId) === agentId) {
+      // An idle session robot leaves quietly; its next hook spawns a new one.
+      stage.finish(agentId, "success", { activity: "Session idle" });
+    } else {
+      stage.finish(agentId, "error", { activity: "Lost contact" });
+    }
+    forgetAgent(stage, state, agentId);
     reaped.push(agentId);
   }
   return reaped;

@@ -11,15 +11,15 @@ import {
 
 /**
  * Dispatch Floor helpers. Bays are pure layout data: a live agent takes the
- * lowest free bay, and when every bay is occupied it waits at the Meeting
- * Lounge ring until one frees.
+ * lowest free bay, and when every bay is occupied it waits at the Collaboration
+ * Table ring until one frees.
  *
  * This module is imported by the simulation-side fake backend and the
  * headless checks, so it stays free of React, three and Next imports.
  */
 
 export const DISPATCH_LOCATION: LocationId = "dispatch";
-export const WAITING_LOCATION: LocationId = "lounge";
+export const WAITING_LOCATION: LocationId = "collab";
 
 /** Lowest free bay index, or null when all twelve are occupied. */
 export function allocateBay(occupied: ReadonlySet<number>): number | null {

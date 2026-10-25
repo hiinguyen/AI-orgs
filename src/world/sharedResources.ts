@@ -117,15 +117,6 @@ function buildStool(): THREE.BufferGeometry {
   ]);
 }
 
-function buildLoungeSeat(): THREE.BufferGeometry {
-  return merge([
-    transformed(unitBox().scale(0.95, 0.36, 0.8), [0, 0.18, 0]),
-    transformed(unitBox().scale(0.95, 0.42, 0.15), [0, 0.45, -0.33]),
-    transformed(unitBox().scale(0.12, 0.22, 0.8), [-0.52, 0.29, 0]),
-    transformed(unitBox().scale(0.12, 0.22, 0.8), [0.52, 0.29, 0]),
-  ]);
-}
-
 export const geometries = {
   get box(): THREE.BoxGeometry {
     return sharedGeometry("box", unitBox);
@@ -207,9 +198,6 @@ export const geometries = {
   },
   get stool(): THREE.BufferGeometry {
     return sharedGeometry("stool", buildStool);
-  },
-  get loungeSeat(): THREE.BufferGeometry {
-    return sharedGeometry("lounge-seat", buildLoungeSeat);
   },
   get hubBase(): THREE.CylinderGeometry {
     return sharedGeometry(

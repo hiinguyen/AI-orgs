@@ -130,7 +130,7 @@ const CUE_BY_EVENT: Readonly<Record<AgentEventType, CueId | null>> = {
 
 /**
  * The footstep is only meaningful when an agent arrives with a task; walking
- * back home or wandering to the lounge stays silent.
+ * back home or wandering to a board stays silent.
  */
 export function cueForEvent(
   event: Pick<AgentEvent, "type"> & { taskId?: string },
