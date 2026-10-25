@@ -22,8 +22,8 @@ export const CAMERA_PRESETS: Record<CameraPresetId, CameraPreset> = {
     target: [8.25, 0.6, -2.8],
   },
   research: {
-    position: [-6.6, 5.8, 13.2],
-    target: [-10.2, 0.9, 4.6],
+    position: [0.6, 5.6, 11.2],
+    target: [6.8, 0.9, 5.2],
   },
   collaboration: {
     position: [-3.2, 8.4, 15],

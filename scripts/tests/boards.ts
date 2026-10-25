@@ -5,7 +5,11 @@
  */
 import type { AgentId, AgentState, AgentStatus } from "../../src/agents/agentTypes.ts";
 import { getAgentProfile, CORE_AGENTS } from "../../src/agents/AgentRegistry.ts";
-import { TICK_SECONDS } from "../../src/simulation/simulationConfig.ts";
+import {
+  SIMULATION_CONFIG,
+  TICK_SECONDS,
+} from "../../src/simulation/simulationConfig.ts";
+import { revealCount } from "../../src/simulation/phaseChoreography.ts";
 import type { WorldSnapshot } from "../../src/integrations/AgentBackend.ts";
 import { DEMO_TASK } from "../../src/tasks/taskActions.ts";
 import type {
@@ -33,19 +37,25 @@ import {
   planningCardPositions,
   planningCards,
   planningSignature,
+  planningStatus,
 } from "../../src/world/planningContent.ts";
+import {
+  RESEARCH_ROW_LIMIT,
+  researchSignature,
+  researchView,
+} from "../../src/world/researchContent.ts";
 import {
   PLANNING_BOARD_CENTER,
   headingFor,
   slotFor,
 } from "../../src/simulation/worldLayout.ts";
-import { stationOperator } from "../../src/world/stationPresence.ts";
+import { stationOperator, stationWorking } from "../../src/world/stationPresence.ts";
 import { harness, tickUntil } from "./harness.ts";
 import type { TestReporter } from "./harness.ts";
 
 const EPSILON = 1e-9;
 
-function makeTask(
+export function makeTask(
   id: string,
   phase: WorkflowPhase,
   priority: TaskPriority,
@@ -238,46 +248,124 @@ function runSignatureChecks(reporter: TestReporter): void {
 
 function runOperatorChecks(reporter: TestReporter): void {
   const { check } = reporter;
-  const atWall = makeAgent("piper", "working", { location: "mission" });
-  const operating = missionView(snapshotWith([], [atWall]), true);
-  const idleAtWall = missionView(
-    snapshotWith([], [makeAgent("piper", "idle", { location: "mission" })]),
-    true,
-  );
+  const planningTask = makeTask("T-1", "planning", "high", 1);
+  const researchTask = makeTask("T-2", "research", "high", 2);
+  const piper = makeAgent("piper", "working", { location: "planning" });
+  const iris = makeAgent("iris", "working", { location: "researchBoard" });
 
   check(
-    "the wall names the agent operating the mission console",
-    operating.operator?.id === "piper" &&
-      operating.operator.name === getAgentProfile("piper").name,
-    operating.operator?.id ?? "none",
-  );
-  check(
-    "walking through Mission Control does not claim the wall",
-    missionView(
-      snapshotWith([], [makeAgent("piper", "walking", { location: "mission" })]),
-      true,
-    ).operator === null,
-  );
-  check(
-    "a paused operator releases the wall",
-    missionView(
-      snapshotWith([], [
-        makeAgent("piper", "working", { location: "mission", paused: true }),
-      ]),
-      true,
-    ).operator === null,
-  );
-  check(
-    "the operator changes the wall signature",
-    missionSignature(operating) !== missionSignature(idleAtWall),
+    "the sprint board detects the agent working there",
+    stationOperator(snapshotWith([], [piper]), "planning")?.id === "piper" &&
+      stationOperator(snapshotWith([], [iris]), "planning") === null,
   );
   check(
     "the research board detects the agent working there",
+    stationOperator(snapshotWith([], [iris]), "researchBoard")?.id === "iris",
+  );
+  check(
+    "walking or paused agents do not operate a board",
     stationOperator(
-      snapshotWith([], [makeAgent("iris", "working", { location: "planning" })]),
+      snapshotWith([], [makeAgent("piper", "walking", { location: "planning" })]),
       "planning",
-    )?.id === "iris" &&
-      stationOperator(snapshotWith([], [atWall]), "planning") === null,
+    ) === null &&
+      stationOperator(
+        snapshotWith([], [{ ...piper, paused: true }]),
+        "planning",
+      ) === null,
+  );
+  check(
+    "the sprint LED lights only for the planning phase",
+    stationWorking(snapshotWith([planningTask], [piper]), "planning", "planning") &&
+      !stationWorking(snapshotWith([researchTask], [piper]), "planning", "planning"),
+  );
+  check(
+    "the research LED lights only for the research phase",
+    stationWorking(
+      snapshotWith([researchTask], [iris]),
+      "researchBoard",
+      "research",
+    ) &&
+      !stationWorking(
+        snapshotWith([planningTask], [iris]),
+        "researchBoard",
+        "research",
+      ),
+  );
+}
+
+function runResearchContentChecks(reporter: TestReporter): void {
+  const { check } = reporter;
+  const findings = ["f one", "f two", "f three"];
+  const [start, end] = SIMULATION_CONFIG.phaseProgress.research;
+  const half = makeTask("T-9", "research", "high", 9, {
+    title: "Investigate caching",
+    findings: findings.slice(0, 2),
+    progress: start + (end - start) * 0.5,
+  });
+  const view = researchView([half]);
+
+  check(
+    "research rows follow the published findings",
+    view.rows.length === 2 &&
+      view.rows[0].text === "f one" &&
+      view.rows[1].index === 2,
+    `${view.rows.length} rows`,
+  );
+  check(
+    "research progress is the phase-local percent",
+    view.percent === 50 && view.researching,
+    `${view.percent}%`,
+  );
+  check("the research topic is the task title", view.topic === "Investigate caching");
+  check(
+    "a new finding changes the research signature",
+    researchSignature(view) !==
+      researchSignature(
+        researchView([{ ...half, findings: findings.slice(0, 3) }]),
+      ),
+  );
+  check(
+    "an idle board shows no rows and no progress",
+    researchView([]).rows.length === 0 &&
+      researchView([]).taskId === null &&
+      researchView([]).percent === 0,
+  );
+  const finished = makeTask("T-8", "done", "low", 8, {
+    status: "completed",
+    findings,
+    progress: 1,
+    completedAt: 20,
+  });
+  const kept = researchView([finished]);
+  check(
+    "the last finished findings stay on the board",
+    kept.rows.length === 3 && !kept.researching && kept.percent === 100,
+  );
+  check(
+    "rows are capped at the row limit",
+    researchView([
+      makeTask("T-7", "research", "low", 7, {
+        findings: Array.from({ length: 12 }, (_, i) => `f${i}`),
+      }),
+    ]).rows.length === RESEARCH_ROW_LIMIT,
+  );
+
+  const [pStart, pEnd] = SIMULATION_CONFIG.phaseProgress.planning;
+  const planning = makeTask("T-6", "planning", "high", 6, {
+    progress: pStart + (pEnd - pStart) * 0.25,
+    subtasks: makeSubtasks("T-6", 2),
+  });
+  const status = planningStatus([planning]);
+  check(
+    "the sprint strip reports phase-local planning progress",
+    status !== null && status.percent === 25 && status.cards === 2,
+  );
+  check("no planning task means no strip status", planningStatus([half]) === null);
+  check("reveal count grows with progress", 
+    revealCount(6, 0) === 0 &&
+      revealCount(6, 0.01) === 1 &&
+      revealCount(6, 0.5) === 3 &&
+      revealCount(6, 1) === 6,
   );
 }
 
@@ -419,7 +507,7 @@ function runLayoutChecks(reporter: TestReporter): void {
 function runPlanningWalkChecks(reporter: TestReporter): void {
   const { check } = reporter;
   const halfWidth = PLANNING_BOARD.width / 2;
-  const offsets = [0, 1].map((seat) => {
+  const offsets = CORE_AGENTS.map((agent) => agent.seat).map((seat) => {
     const slot = slotFor("planning", seat);
     const dx = slot.x - PLANNING_BOARD_CENTER.x;
     const dz = slot.z - PLANNING_BOARD_CENTER.z;
@@ -460,7 +548,7 @@ function runEngineBoardChecks(reporter: TestReporter): void {
   const created = engine.submitTask(DEMO_TASK);
   const planned = tickUntil(
     engine,
-    () => (engine.getTask(created.id)?.subtasks.length ?? 0) > 0,
+    () => (engine.getTask(created.id)?.subtasks.length ?? 0) >= 6,
     60,
   );
   const snapshot = engine.snapshot();
@@ -512,6 +600,7 @@ export function runBoardsSuite(reporter: TestReporter): void {
   runActiveTaskChecks(reporter);
   runSignatureChecks(reporter);
   runOperatorChecks(reporter);
+  runResearchContentChecks(reporter);
   runPlanningChecks(reporter);
   runLayoutChecks(reporter);
   runPlanningWalkChecks(reporter);

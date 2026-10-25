@@ -17,12 +17,25 @@ import {
   PLANNING_BOARD,
   PLANNING_BOARD_FACE_OFFSET,
   PLANNING_BOARD_ROTATION,
+  BOARD_FEET_DEPTH,
+  CARD_SCALE_SECONDS,
+  PLANNING_BOARD_FRAME_WIDTH,
   PLANNING_CARD_LIMIT,
+  cardScale,
   planningCards,
   planningSignature,
+  planningStatus,
   type PlanningCard,
+  type PlanningStatus,
 } from "./planningContent";
-import { stationOperator } from "./stationPresence";
+import { stationWorking } from "./stationPresence";
+import { getAgentProfile } from "@/agents/AgentRegistry";
+import {
+  createStripSurface,
+  drawStrip,
+  type StripSurface,
+  type StripStyle,
+} from "./boardStrip";
 
 /**
  * Whiteboard with one instanced sticky card per subtask of the active tasks.
@@ -35,23 +48,84 @@ import { stationOperator } from "./stationPresence";
 const CARD_X = 0.12;
 const BOARD_CENTER_Z = PLANNING_BOARD.width / 2;
 const BOARD_BOTTOM_Y = 0.35;
-const CARD_SCALE_SECONDS = 0.3;
 const SIGNATURE_INTERVAL_SECONDS = 0.2;
-const RESEARCH_GLOW_LAMBDA = 5;
-const RESEARCH_IDLE_GLOW = 0.4;
-const RESEARCH_ACTIVE_GLOW = 2.3;
+/** Feet are 0.5 m deep boxes; their back edge sits at BOARD_FEET_DEPTH. */
+const FOOT_X = 0.25 - BOARD_FEET_DEPTH;
+const GLOW_LAMBDA = 5;
+const IDLE_GLOW = 0.4;
+const ACTIVE_GLOW = 2.3;
+const STRIP_WIDTH = PLANNING_BOARD.width - 0.24;
+const STRIP_HEIGHT = 0.16;
+const STRIP_Y = BOARD_BOTTOM_Y + 0.12;
+const STRIP_STYLE: StripStyle = {
+  accent: "#f0b429",
+  background: "#1d2733",
+  track: "#3a4757",
+  text: "#e8edf2",
+  muted: "#8a97a6",
+};
 
-const researchGlowMaterial = sharedMaterial(
-  "planning-research-glow",
+const glowMaterial = sharedMaterial(
+  "planning-board-glow",
   () =>
     new THREE.MeshStandardMaterial({
       color: "#0b1119",
-      emissive: "#5cc8d7",
-      emissiveIntensity: RESEARCH_IDLE_GLOW,
+      emissive: "#f0b429",
+      emissiveIntensity: IDLE_GLOW,
       roughness: 0.34,
       metalness: 0.28,
     }),
 );
+
+let stripSurface: StripSurface | null = null;
+function planningStrip(): StripSurface {
+  if (stripSurface === null) {
+    stripSurface = createStripSurface(STRIP_WIDTH, STRIP_HEIGHT);
+  }
+  return stripSurface;
+}
+
+const stripMaterial = sharedMaterial(
+  "planning-board-strip",
+  () =>
+    new THREE.MeshStandardMaterial({
+      map: planningStrip().texture,
+      emissiveMap: planningStrip().texture,
+      emissive: "#ffffff",
+      emissiveIntensity: 0.5,
+      transparent: true,
+      roughness: 0.6,
+      metalness: 0,
+    }),
+);
+const stripPlane = sharedGeometry(
+  "planning-board-strip-plane",
+  () => new THREE.PlaneGeometry(STRIP_WIDTH, STRIP_HEIGHT),
+);
+
+function stripSignature(status: PlanningStatus | null): string {
+  return status === null
+    ? "idle"
+    : `${status.taskId}:${status.percent}:${status.cards}`;
+}
+
+function paintStrip(status: PlanningStatus | null): void {
+  drawStrip(
+    planningStrip(),
+    status === null
+      ? {
+          label: "SPRINT BOARD READY - WAITING FOR THE NEXT TASK",
+          ratio: null,
+          percentText: "--",
+        }
+      : {
+          label: `${getAgentProfile("piper").name.toUpperCase()} PLANNING ${status.taskId} - ${status.cards} ${status.cards === 1 ? "CARD" : "CARDS"}`,
+          ratio: status.ratio,
+          percentText: `${status.percent}%`,
+        },
+    STRIP_STYLE,
+  );
+}
 
 const cardGeometry = sharedGeometry(
   "sticky-card",
@@ -78,13 +152,6 @@ function tintColor(scratch: Scratch, tint: string): THREE.Color {
   const color = new THREE.Color(tint);
   scratch.tints.set(tint, color);
   return color;
-}
-
-function cardScale(age: number): number {
-  if (age >= CARD_SCALE_SECONDS) return 1;
-  const t = Math.max(0, age) / CARD_SCALE_SECONDS;
-  const inverse = 1 - t;
-  return 1 - inverse * inverse * inverse;
 }
 
 function writeCard(
@@ -147,6 +214,7 @@ export function PlanningBoard() {
   const lastSnapshot = useRef<WorldSnapshot | null | undefined>(undefined);
   const elapsed = useRef(SIGNATURE_INTERVAL_SECONDS);
   const animating = useRef(false);
+  const stripKey = useRef<string | null>(null);
 
   const scratchRef = useRef<Scratch | null>(null);
   if (scratchRef.current === null) {
@@ -183,12 +251,12 @@ export function PlanningBoard() {
     const scratch = scratchRef.current;
     if (!mesh || !scratch) return;
 
-    researchGlowMaterial.emissiveIntensity = THREE.MathUtils.damp(
-      researchGlowMaterial.emissiveIntensity,
-      stationOperator(liveWorld.current, "planning") !== null
-        ? RESEARCH_ACTIVE_GLOW
-        : RESEARCH_IDLE_GLOW,
-      RESEARCH_GLOW_LAMBDA,
+    glowMaterial.emissiveIntensity = THREE.MathUtils.damp(
+      glowMaterial.emissiveIntensity,
+      stationWorking(liveWorld.current, "planning", "planning")
+        ? ACTIVE_GLOW
+        : IDLE_GLOW,
+      GLOW_LAMBDA,
       delta,
     );
 
@@ -200,6 +268,12 @@ export function PlanningBoard() {
       // publishes another snapshot; the signature stays the redraw gate.
       if (snapshot !== lastSnapshot.current) {
         lastSnapshot.current = snapshot;
+        const status = planningStatus(snapshot?.tasks ?? []);
+        const statusKey = stripSignature(status);
+        if (statusKey !== stripKey.current) {
+          stripKey.current = statusKey;
+          paintStrip(status);
+        }
         const nextCards = planningCards(snapshot?.tasks ?? []);
         const nextSignature = planningSignature(nextCards);
         if (nextSignature !== signature.current) {
@@ -246,7 +320,7 @@ export function PlanningBoard() {
         geometry={geometries.box}
         material={materials.metal}
         position={[0, 1.5, 0]}
-        scale={[0.16, 2.98, 4.42]}
+        scale={[0.16, 2.98, PLANNING_BOARD_FRAME_WIDTH]}
         castShadow
       />
       <mesh
@@ -257,20 +331,26 @@ export function PlanningBoard() {
       />
       <mesh
         geometry={geometries.box}
-        material={researchGlowMaterial}
+        material={glowMaterial}
         position={[PLANNING_BOARD_FACE_OFFSET + 0.05, 2.82, 0]}
         scale={[0.05, 0.03, PLANNING_BOARD.width]}
       />
       <mesh
+        geometry={stripPlane}
+        material={stripMaterial}
+        position={[PLANNING_BOARD_FACE_OFFSET + 0.004, STRIP_Y, 0]}
+        rotation-y={Math.PI / 2}
+      />
+      <mesh
         geometry={geometries.box}
         material={materials.metal}
-        position={[-0.28, 0.1, -1.25]}
+        position={[FOOT_X, 0.1, -1.25]}
         scale={[0.5, 0.2, 0.4]}
       />
       <mesh
         geometry={geometries.box}
         material={materials.metal}
-        position={[-0.28, 0.1, 1.25]}
+        position={[FOOT_X, 0.1, 1.25]}
         scale={[0.5, 0.2, 0.4]}
       />
       <instancedMesh

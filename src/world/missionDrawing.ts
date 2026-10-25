@@ -142,16 +142,14 @@ function drawHeader(ctx: CanvasRenderingContext2D, view: MissionView): void {
   ctx.fillText(title, 68, 56);
   const titleWidth = ctx.measureText(title).width;
 
-  const subtitle = view.operator
-    ? `WALL CONTROL / ${view.operator.name.toUpperCase()}`
-    : "ORCHESTRATION OVERVIEW";
+  const subtitle = "ORCHESTRATION OVERVIEW";
   ctx.font = "16px ui-monospace, Menlo, monospace";
   const subtitleWidth = ctx.measureText(subtitle).width;
   const subtitleX = Math.min(
     68 + titleWidth + 40,
     pillX - 24 - subtitleWidth,
   );
-  ctx.fillStyle = view.operator ? view.operator.color : MUTED;
+  ctx.fillStyle = MUTED;
   ctx.fillText(subtitle, subtitleX, 56);
 
   ctx.fillStyle = view.simulated

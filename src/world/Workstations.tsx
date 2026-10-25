@@ -9,6 +9,7 @@ import { BayDesks } from "./BayDesks";
 import { OperationsHub } from "./OperationsHub";
 import { MissionControl } from "./MissionControl";
 import { PlanningBoard } from "./PlanningBoard";
+import { ResearchBoard } from "./ResearchBoard";
 
 interface RingSeat {
   x: number;
@@ -18,7 +19,7 @@ interface RingSeat {
 
 /**
  * Furniture seats halfway between the agent ring slots, so a robot can stand
- * on every slot without clipping a stool or a lounge seat.
+ * on every slot without clipping a stool.
  */
 function seatsBetweenSlots(
   slots: readonly { x: number; z: number }[],
@@ -39,14 +40,9 @@ function seatsBetweenSlots(
 }
 
 const COLLAB_CENTER = LOCATIONS.collab.center ?? { x: -5, z: 5.6 };
-const LOUNGE_CENTER = LOCATIONS.lounge.center ?? { x: 7.5, z: 6.2 };
 const COLLAB_SEATS = seatsBetweenSlots(
   LOCATIONS.collab.slots,
   COLLAB_CENTER,
-);
-const LOUNGE_SEATS = seatsBetweenSlots(
-  LOCATIONS.lounge.slots,
-  LOUNGE_CENTER,
 );
 
 function CollabTable() {
@@ -98,51 +94,7 @@ function CollabTable() {
   );
 }
 
-function Lounge() {
-  const seats = useRef<THREE.InstancedMesh>(null);
-  const center = LOUNGE_CENTER;
-
-  useLayoutEffect(() => {
-    const dummy = new THREE.Object3D();
-    LOUNGE_SEATS.forEach((seat, index) => {
-      dummy.position.set(seat.x, 0, seat.z);
-      dummy.rotation.set(0, seat.rotation, 0);
-      dummy.updateMatrix();
-      seats.current?.setMatrixAt(index, dummy.matrix);
-    });
-    if (seats.current) seats.current.instanceMatrix.needsUpdate = true;
-  }, []);
-
-  return (
-    <group>
-      <group position={[center.x, 0, center.z]}>
-        <mesh
-          geometry={geometries.cylinder}
-          material={materials.metal}
-          position={[0, 0.06, 0]}
-          scale={[2.5, 0.12, 2.5]}
-          receiveShadow
-        />
-        <mesh
-          geometry={geometries.cylinder}
-          material={materials.desk}
-          position={[0, 0.3, 0]}
-          scale={[1.5, 0.36, 1.5]}
-          castShadow
-          receiveShadow
-        />
-      </group>
-      <instancedMesh
-        ref={seats}
-        args={[geometries.loungeSeat, materials.chair, LOUNGE_SEATS.length]}
-        castShadow
-        receiveShadow
-      />
-    </group>
-  );
-}
-
-/** Every desk, console, wall screen, board and lounge seat in the office. */
+/** Every desk, console, wall screen, board and seat in the office. */
 export function Workstations() {
   return (
     <group>
@@ -152,7 +104,7 @@ export function Workstations() {
       <MissionControl />
       <PlanningBoard />
       <CollabTable />
-      <Lounge />
+      <ResearchBoard />
     </group>
   );
 }

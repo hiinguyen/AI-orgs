@@ -17,7 +17,12 @@ import type {
   SimulationStatus,
   WorldSnapshot,
 } from "../integrations/AgentBackend.ts";
-import { allocateBay, bayStand, routeToBay } from "./bays.ts";
+import {
+  WAITING_LOCATION,
+  allocateBay,
+  bayStand,
+  routeToBay,
+} from "./bays.ts";
 import { headingFor, route, slotFor } from "./worldLayout.ts";
 
 /**
@@ -586,13 +591,13 @@ export class LiveStage {
     let index = 0;
     for (const agent of this.agents) {
       if (!agent.waiting || agent.phase !== "waiting") continue;
-      const slot = slotFor("lounge", index);
+      const slot = slotFor(WAITING_LOCATION, index);
       agent.state.position.x = slot.x;
       agent.state.position.z = slot.z;
-      agent.state.location = "lounge";
+      agent.state.location = WAITING_LOCATION;
       agent.state.destination = null;
       agent.state.path = [];
-      agent.state.heading = headingFor("lounge", index);
+      agent.state.heading = headingFor(WAITING_LOCATION, index);
       index += 1;
     }
   }

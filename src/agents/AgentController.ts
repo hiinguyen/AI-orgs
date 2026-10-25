@@ -96,9 +96,13 @@ interface RunningAction {
   slot: number;
 }
 
+/**
+ * Idle spread. Every location here has one slot per agent seat, so two idle
+ * agents never share a spot.
+ */
 const AMBIENT_LOCATIONS: readonly LocationId[] = [
   "collab",
-  "lounge",
+  "researchBoard",
   "planning",
 ];
 

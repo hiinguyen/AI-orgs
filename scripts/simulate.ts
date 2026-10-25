@@ -9,6 +9,7 @@
  */
 import { runBackendSuite } from "./tests/backend.ts";
 import { runBoardsSuite } from "./tests/boards.ts";
+import { runBoardRoutesSuite } from "./tests/boardRoutes.ts";
 import {
   runBacklogSuite,
   runConcurrencySuite,
@@ -53,6 +54,7 @@ async function main(): Promise<void> {
   runAgentsSuite(reporter);
   runMirrorSuite(reporter);
   runBoardsSuite(reporter);
+  runBoardRoutesSuite(reporter);
   runQualitySuite(reporter);
   runReducedMotionSuite(reporter);
   await runSoundSuite(reporter);

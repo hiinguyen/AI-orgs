@@ -1,4 +1,5 @@
 import type { AgentId, Vec2 } from "../agents/agentTypes.ts";
+import { getAgentProfile } from "../agents/AgentRegistry.ts";
 
 export const FLOOR = {
   width: 30,
@@ -19,10 +20,9 @@ export type LocationId =
   | "dev"
   | "testing"
   | "review"
-  | "mission"
   | "planning"
   | "collab"
-  | "lounge"
+  | "researchBoard"
   | "dispatch";
 
 export type ZoneId =
@@ -43,27 +43,89 @@ export interface WorldLocation {
 
 export const HUB_CENTER: Vec2 = { x: 0, z: -0.6 };
 export const MISSION_CONTROL: Vec2 = { x: 0, z: -7.4 };
-/**
- * Control console between the wall and the room. The two stand slots sit off
- * the centre line so the walk from the corridor never passes through the
- * Operations Hub, and Piper reaches the console without stepping over it.
- */
-export const MISSION_CONSOLE: Vec2 = { x: 0, z: -6.55 };
-export const MISSION_STAND_SLOTS: readonly Vec2[] = [
-  { x: -2.2, z: -5.35 },
-  { x: 2.2, z: -5.35 },
-];
 /** Angled whiteboard in the collaboration corner, clear of the walking corridor. */
-export const PLANNING_BOARD_CENTER: Vec2 = { x: -10.8, z: 5.1 };
+export const PLANNING_BOARD_CENTER: Vec2 = { x: -10.8, z: 5.5 };
+/** Board group rotations around Y; the research board is the mirror image. */
+export const PLANNING_BOARD_ROTATION = -0.55;
+export const RESEARCH_BOARD_ROTATION = Math.PI - PLANNING_BOARD_ROTATION;
+/**
+ * Research board on the east side, facing the room like the planning board
+ * does, mirroring its geometry. It sits near the centre-right so the
+ * researcher's walk keeps the demo under its time budget.
+ */
+export const RESEARCH_BOARD_CENTER: Vec2 = { x: 7.4, z: 5.5 };
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
 }
 
-function ring(center: Vec2, radius: number, count = 6): Vec2[] {
+/** One stand slot per agent seat, in a row in front of each board. */
+const BOARD_SEATS = 6;
+const BOARD_SLOT_PITCH = 0.7;
+const BOARD_SLOT_DISTANCE = 1.7;
+/**
+ * Distance in front of the board face where the corridor entry point lies, so
+ * the walk in to a slot never runs along the row past other agents.
+ */
+const BOARD_APPROACH_ALONG = 2.4;
+/** The last leg into a slot runs straight in from this far in front. */
+const BOARD_FRONT_STEP = 1.0;
+/** Seats that do the board's phase work (Piper plans, Iris researches). */
+const PLANNING_WORK_SEAT = getAgentProfile("piper").seat;
+const RESEARCH_WORK_SEAT = getAgentProfile("iris").seat;
+
+/**
+ * Stand slots in a row parallel to the board face, centred on the board and
+ * BOARD_SLOT_DISTANCE in front of it, plus the heading that faces the board.
+ */
+function boardRow(
+  center: Vec2,
+  rotation: number,
+  corridorEntry: Vec2,
+  workSeat: number,
+): { slots: Vec2[]; facing: number } {
+  const normal = { x: Math.cos(rotation), z: -Math.sin(rotation) };
+  const tangent = { x: Math.sin(rotation), z: Math.cos(rotation) };
+  const slots: Vec2[] = [];
+  for (let index = 0; index < BOARD_SEATS; index += 1) {
+    const along = (index - (BOARD_SEATS - 1) / 2) * BOARD_SLOT_PITCH;
+    slots.push({
+      x: round(center.x + normal.x * BOARD_SLOT_DISTANCE + tangent.x * along),
+      z: round(center.z + normal.z * BOARD_SLOT_DISTANCE + tangent.z * along),
+    });
+  }
+  // The seat that works at the board takes the slot nearest the corridor
+  // entry; slot index stays the seat, only the row positions are permuted.
+  let nearest = 0;
+  for (let index = 1; index < slots.length; index += 1) {
+    if (distance(slots[index], corridorEntry) < distance(slots[nearest], corridorEntry)) {
+      nearest = index;
+    }
+  }
+  const swapped = slots[workSeat];
+  slots[workSeat] = slots[nearest];
+  slots[nearest] = swapped;
+  return { slots, facing: round(Math.atan2(-normal.x, -normal.z)) };
+}
+
+/** Corridor point whose distance in front of the board face is BOARD_APPROACH_ALONG. */
+function boardCorridorEntry(center: Vec2, rotation: number): Vec2 {
+  const x =
+    center.x +
+    (BOARD_APPROACH_ALONG - -Math.sin(rotation) * (CORRIDOR_Z - center.z)) /
+      Math.cos(rotation);
+  return { x: round(x), z: CORRIDOR_Z };
+}
+
+function ring(
+  center: Vec2,
+  radius: number,
+  count = 6,
+  startAngle = 0,
+): Vec2[] {
   const slots: Vec2[] = [];
   for (let index = 0; index < count; index += 1) {
-    const angle = (index / count) * Math.PI * 2;
+    const angle = startAngle + (index / count) * Math.PI * 2;
     slots.push({
       x: round(center.x + Math.sin(angle) * radius),
       z: round(center.z + Math.cos(angle) * radius),
@@ -73,12 +135,31 @@ function ring(center: Vec2, radius: number, count = 6): Vec2[] {
 }
 
 const COLLAB_CENTER: Vec2 = { x: -5, z: 5.6 };
-const LOUNGE_CENTER: Vec2 = { x: 7.5, z: 6.2 };
+export const PLANNING_CORRIDOR_ENTRY = boardCorridorEntry(
+  PLANNING_BOARD_CENTER,
+  PLANNING_BOARD_ROTATION,
+);
+export const RESEARCH_CORRIDOR_ENTRY = boardCorridorEntry(
+  RESEARCH_BOARD_CENTER,
+  RESEARCH_BOARD_ROTATION,
+);
+const PLANNING_ROW = boardRow(
+  PLANNING_BOARD_CENTER,
+  PLANNING_BOARD_ROTATION,
+  PLANNING_CORRIDOR_ENTRY,
+  PLANNING_WORK_SEAT,
+);
+const RESEARCH_ROW = boardRow(
+  RESEARCH_BOARD_CENTER,
+  RESEARCH_BOARD_ROTATION,
+  RESEARCH_CORRIDOR_ENTRY,
+  RESEARCH_WORK_SEAT,
+);
 
 /**
  * Dispatch Floor bays. Four columns by three rows in the open foreground
- * between the collaboration ring and the lounge, clear of both rings, the
- * corridor at z 2.8, the planning board, every core desk and the side walls.
+ * between the collaboration ring and the research board, clear of the ring, the
+ * corridor at z 2.8, both boards, every core desk and the side walls.
  *
  * Bay cells are compact: a stand slot with a 0.9 m deep desk in front of it
  * (towards -z, matching the core stations' facing).
@@ -162,37 +243,27 @@ export const LOCATIONS: Record<LocationId, WorldLocation> = {
     facing: Math.PI,
     zone: "development",
   },
-  mission: {
-    id: "mission",
-    label: "Mission Control",
-    slots: MISSION_STAND_SLOTS,
-    facing: Math.PI,
-    zone: "operations",
-  },
   planning: {
     id: "planning",
     label: "Planning Board",
-    slots: [
-      { x: -9.14, z: 5.06 },
-      { x: -10.08, z: 6.6 },
-    ],
-    facing: -2.15,
+    slots: PLANNING_ROW.slots,
+    facing: PLANNING_ROW.facing,
     zone: "collaboration",
   },
   collab: {
     id: "collab",
     label: "Collaboration Table",
-    slots: ring(COLLAB_CENTER, 1.75),
+    // Seat 0 starts on the corridor side, so the first seats are the nearest.
+    slots: ring(COLLAB_CENTER, 1.75, 6, Math.PI),
     facing: "inward",
     center: COLLAB_CENTER,
     zone: "collaboration",
   },
-  lounge: {
-    id: "lounge",
-    label: "Meeting Lounge",
-    slots: ring(LOUNGE_CENTER, 2.1),
-    facing: "inward",
-    center: LOUNGE_CENTER,
+  researchBoard: {
+    id: "researchBoard",
+    label: "Research Board",
+    slots: RESEARCH_ROW.slots,
+    facing: RESEARCH_ROW.facing,
     zone: "collaboration",
   },
   dispatch: {
@@ -212,10 +283,9 @@ export const LOCATION_IDS: readonly LocationId[] = [
   "dev",
   "testing",
   "review",
-  "mission",
   "planning",
   "collab",
-  "lounge",
+  "researchBoard",
   "dispatch",
 ];
 
@@ -243,8 +313,106 @@ export function distance(a: Vec2, b: Vec2): number {
 }
 
 /**
+ * Corridor point where a walk to or from a board slot leaves the corridor.
+ * The corridor end straight above a slot can sit behind the board panel, so
+ * board walks use a corridor point in front of the face and go diagonally
+ * to the slot. Offsets are relative to the board centre (x mirrored).
+ */
+const BOARDS_WITH_APPROACH: readonly {
+  location: LocationId;
+  corridorX: number;
+  rotation: number;
+}[] = [
+  {
+    location: "planning",
+    corridorX: PLANNING_CORRIDOR_ENTRY.x,
+    rotation: PLANNING_BOARD_ROTATION,
+  },
+  {
+    location: "researchBoard",
+    corridorX: RESEARCH_CORRIDOR_ENTRY.x,
+    rotation: RESEARCH_BOARD_ROTATION,
+  },
+];
+
+/**
+ * Waypoints (corridor point first, slot excluded) for a board slot: the
+ * corridor point in front of the face, then a point straight in front of the
+ * slot, so the last leg never runs along the row past other agents.
+ */
+function boardApproach(point: Vec2): Vec2[] | null {
+  for (const board of BOARDS_WITH_APPROACH) {
+    const isSlot = LOCATIONS[board.location].slots.some(
+      (slot) => distance(slot, point) < 0.05,
+    );
+    if (!isSlot) continue;
+    return [
+      { x: board.corridorX, z: CORRIDOR_Z },
+      {
+        x: point.x + Math.cos(board.rotation) * BOARD_FRONT_STEP,
+        z: point.z - Math.sin(board.rotation) * BOARD_FRONT_STEP,
+      },
+    ];
+  }
+  return null;
+}
+
+/** Collaboration table top radius plus the clearance a walker keeps. */
+const TABLE_RADIUS = 1.05;
+const TABLE_CLEARANCE = 0.4;
+/** The detour column runs this far to the side of the table centre. */
+const TABLE_DETOUR_X = 2.45;
+/** Radial distance past the ring where the detour turns in to a slot. */
+const TABLE_DETOUR_OUTSET = 0.8;
+
+function nearestOnSegment(a: Vec2, b: Vec2, point: Vec2): number {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  const lengthSquared = dx * dx + dz * dz;
+  const t =
+    lengthSquared === 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, ((point.x - a.x) * dx + (point.z - a.z) * dz) / lengthSquared),
+        );
+  return distance({ x: a.x + dx * t, z: a.z + dz * t }, point);
+}
+
+/**
+ * Waypoints (corridor first, slot excluded) for a collab slot whose straight
+ * walk from the corridor would cut through the table: down a column beside
+ * the ring (on the side of `other`, the far end of the walk), then radially
+ * in from outside. Null when the direct walk is clear.
+ */
+function collabDetour(point: Vec2, other: Vec2): Vec2[] | null {
+  const collab = LOCATIONS.collab;
+  const center = collab.center;
+  if (center === undefined) return null;
+  if (!collab.slots.some((slot) => distance(slot, point) < 0.05)) return null;
+  const entry = { x: point.x, z: CORRIDOR_Z };
+  if (nearestOnSegment(entry, point, center) > TABLE_RADIUS + TABLE_CLEARANCE) {
+    return null;
+  }
+  const radius = distance(point, center);
+  const scale = (radius + TABLE_DETOUR_OUTSET) / radius;
+  const outer = {
+    x: center.x + (point.x - center.x) * scale,
+    z: center.z + (point.z - center.z) * scale,
+  };
+  const columnX = center.x + (other.x >= center.x ? TABLE_DETOUR_X : -TABLE_DETOUR_X);
+  return [
+    { x: columnX, z: CORRIDOR_Z },
+    { x: columnX, z: outer.z },
+    outer,
+  ];
+}
+
+/**
  * Route through the corridor band: out to CORRIDOR_Z, along x, then in to the
  * destination. Avoids cutting through desks on both sides of the floor.
+ * Walks to and from a board slot use that board's front corridor point, and
+ * walks to and from a collab slot behind the table go around it.
  */
 export function route(from: Vec2, to: Vec2): Vec2[] {
   const points: Vec2[] = [];
@@ -254,8 +422,33 @@ export function route(from: Vec2, to: Vec2): Vec2[] {
     points.push({ x: round(point.x), z: round(point.z) });
   };
 
-  push({ x: from.x, z: CORRIDOR_Z });
-  push({ x: to.x, z: CORRIDOR_Z });
+  const leaving = collabDetour(from, to);
+  if (leaving !== null) {
+    for (let index = leaving.length - 1; index >= 0; index -= 1) {
+      push(leaving[index]);
+    }
+  } else {
+    const boardLeave = boardApproach(from);
+    if (boardLeave === null) {
+      push({ x: from.x, z: CORRIDOR_Z });
+    } else {
+      for (let index = boardLeave.length - 1; index >= 0; index -= 1) {
+        push(boardLeave[index]);
+      }
+    }
+  }
+
+  const arriving = collabDetour(to, from);
+  if (arriving !== null) {
+    for (const point of arriving) push(point);
+  } else {
+    const boardArrive = boardApproach(to);
+    if (boardArrive === null) {
+      push({ x: to.x, z: CORRIDOR_Z });
+    } else {
+      for (const point of boardArrive) push(point);
+    }
+  }
   push({ x: to.x, z: to.z });
   return points;
 }

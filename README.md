@@ -11,7 +11,7 @@ A living 3D office in the browser where six AI agents - an Orchestrator, a Produ
 ## Contents
 
 - [Quick start](#quick-start)
-- [The 90-second demo](#the-90-second-demo)
+- [The 94-second demo](#the-94-second-demo)
 - [The team](#the-team)
 - [Feature tour](#feature-tour)
 - [Controls](#controls)
@@ -33,7 +33,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000, wait ~1 second for the loading screen, then press **Run demo** in the top bar. Within 90 seconds you will watch six distinct robots walk between labelled stations, exchange glowing messages, fail a test, fix it, get approved, and celebrate - with sound - while every step is mirrored in the side panel and the activity feed.
+Open http://localhost:3000, wait ~1 second for the loading screen, then press **Run demo** in the top bar. Within about 100 seconds you will watch six distinct robots walk between labelled stations, exchange glowing messages, fail a test, fix it, get approved, and celebrate - with sound - while every step is mirrored in the side panel and the activity feed.
 
 No other setup, no binary assets to download: textures are painted on `<canvas>` at runtime, sounds are synthesised with Web Audio, and the robots are procedural primitives. The repo runs with `npm install && npm run dev` and nothing else.
 
@@ -44,13 +44,53 @@ URL flags:
 
 Without a flag the app picks quality up front from the machine (cores, viewport width, reduced-motion preference) and can still drop to low automatically if the frame rate cannot hold (see [Rendering and performance](#rendering-and-performance))).
 
-## The 90-second demo
+### Two ways to run it
 
-The **Run demo** button loads a single scripted task and runs it at 1x speed. It completes in about 75 simulation seconds, tick for tick identical on every run:
+| Mode | What drives the robots | How to start |
+| --- | --- | --- |
+| Simulation (default) | The deterministic local simulation, no hooks needed | `npm run dev`, then press **Run demo** |
+| Live (Claude Code) | Your real Claude Code sessions, through hooks | `npm run bridge` plus `npm run dev` with two environment variables |
+
+Live mode needs two processes.
+Start the hooks bridge in one terminal:
+
+```bash
+npm run bridge
+```
+
+Start the app, pointed at the bridge, in a second terminal:
+
+```bash
+NEXT_PUBLIC_AGENT_BACKEND=websocket \
+NEXT_PUBLIC_AGENT_WS_URL=ws://127.0.0.1:8791/ws \
+npm run dev
+```
+
+Open http://localhost:3000 and check that the top bar reads "Live backend".
+
+To see it move without Claude Code, run `npm run bridge:replay` in a third terminal.
+It posts a scripted session with parallel subagents, tool calls and a failure, so you can watch robots appear and the six core agents change posture.
+
+To drive it with real Claude Code sessions, install the hooks once (step 3 of [Connecting Claude Code](#connecting-claude-code)), then start Claude Code in any project.
+Each session gets its own robot, and each subagent gets one that hangs off it.
+The six core agents mirror the live agent of their role: they type while it works, think between tool calls, and flash green or red when a subagent finishes or fails.
+In live mode Run demo, Load sprint, New task and the speed control are hidden, because the bridge only watches.
+
+If nothing shows up:
+
+- The top bar still says "Simulation mode": the `NEXT_PUBLIC_*` variables are read when the dev server starts, so stop it and start it again with them set.
+- Opening http://127.0.0.1:8791 only shows a banner and proves the bridge is up, not that hooks arrive. Run `npm run bridge -- --capture` to print the name of each hook event as it comes in.
+- Hooks arrive from `npm run bridge:replay` but not from Claude Code: Claude Code reads hook settings when a session starts, so start a new session, or review them with `/hooks`.
+- Port 8791 is busy: set `BRIDGE_PORT`, use the same port in `NEXT_PUBLIC_AGENT_WS_URL`, and export the same `BRIDGE_PORT` in the environment that runs Claude Code.
+- Short read-only subagents finish in seconds, so their robots can leave before you look. Use `npm run bridge:replay` to see long-lived ones.
+
+## The 94-second demo
+
+The **Run demo** button loads a single scripted task and runs it at 1x speed. It completes in about 94 simulation seconds, tick for tick identical on every run:
 
 1. **Intake** - Orion (orchestrator) walks to the Operations Hub, thinks, then talks to Piper. A glowing assignment arc fires and `T-001` becomes hers.
-2. **Planning** - Piper walks to the Mission Control wall and works from its control deck, breaking the task into six subtasks; sticky cards appear on the planning board as she creates them. The wall header shows `WALL CONTROL / PIPER`. She briefs Iris.
-3. **Research** - Iris works at the planning board in the left corner, publishes findings, then briefs Kai.
+2. **Planning** - Piper walks to the Sprint Planning board in the west corner and breaks the task into six subtasks; sticky cards appear one by one as the breakdown progresses, with a progress bar and percent on the board. She briefs Iris.
+3. **Research** - Iris works at the dark Research board on the centre-right side of the floor, where findings appear as rows with a progress bar while she researches, then briefs Kai.
 4. **Implementation** - Kai works at the Engineering Station; his monitors glow while he types, subtasks tick off, the mission-control wall tracks progress. He submits the build to Quinn.
 5. **Testing** - Quinn runs the test suite at the QA Lab - and the demo task is scripted to **fail** on the first attempt. Quinn shows a red pulse, buzzes, and reports back to Kai.
 6. **Rework** - Kai returns to his desk, fixes the failing test (iteration 2) and submits again. Quinn's tests pass this time; Rex gets the build.
@@ -70,11 +110,11 @@ The whole choreography - who walks where, who talks to whom, which subtask is do
 | quinn | Quinn | QA Engineer | Tests completed work | `#5FD39A` | QA Lab |
 | rex | Rex | Code Reviewer | Reviews implementation quality | `#F08A7E` | Review Station |
 
-Each role has a distinct rig: Orion is taller with a crown-like visor, Iris has a lens, Piper carries a tablet, Kai wears a headset, Quinn has twin sensors, Rex has a monocle. Each agent has a seat index so they never overlap at the shared ring locations (collab table, lounge, planning board), and a personal pitch used for their communication sounds (Orion C5, Piper E5, Iris D5, Kai A4, Quinn F5, Rex G4).
+Each role has a distinct rig: Orion is taller with a crown-like visor, Iris has a lens, Piper carries a tablet, Kai wears a headset, Quinn has twin sensors, Rex has a monocle. Each agent has a seat index and every shared location (the collab table ring and a row of six stand slots in front of each board) has one slot per seat, so two agents never overlap there, and a personal pitch used for their communication sounds (Orion C5, Piper E5, Iris D5, Kai A4, Quinn F5, Rex G4).
 
 ## Feature tour
 
-**The world.** A dark glass office at blue hour: procedural floor tiles, a dusk-gradient window wall with an instanced skyline of ~260 towers behind it, low glass partitions between zones, plants, drifting dust motes. One wall carries the **mission-control screen** - a canvas texture that redraws a few times per second with active task titles, phases, progress bars and agent statuses, only when the content actually changed. Its control deck glows violet while an agent operates the wall, and the header names that operator. The **planning board** holds up to 24 sticky cards that appear as subtasks are created and change tint when they are done; its cyan edge strip brightens while the researcher works there. Desks have chairs and monitors with a scrolling procedural "code" screen whose emissive glow rises while the owner works.
+**The world.** A dark glass office at blue hour: procedural floor tiles, a dusk-gradient window wall with an instanced skyline of ~260 towers behind it, low glass partitions between zones, plants, drifting dust motes. One wall carries the **mission-control screen** - a canvas texture that redraws a few times per second with active task titles, phases, progress bars and agent statuses, only when the content actually changed. The **sprint planning board** holds up to 24 sticky cards that appear as subtasks are created and change tint when they are done; its amber LED and progress strip run while the planner works there. The **research board** opposite it is a dark display that lists findings as rows with its own progress strip, and its cyan LED brightens while the researcher works there. Desks have chairs and monitors with a scrolling procedural "code" screen whose emissive glow rises while the owner works.
 
 **The agents.** Procedural robots with a blended pose system: idle breathing, walking driven by actual speed, typing, thinking (head tilt, hand to chin), talking gestures, a success bounce and an error slump. Each agent trails a path of small discs flowing along their remaining route, with a breathing ring at the destination. Communication is drawn as a glowing bezier arc between the two agents with instanced packet sprites travelling along it. Speech bubbles are DOM pills that track the 3D position of each agent (see [engineering notes](#engineering-notes-why-the-code-looks-like-this) for why they are not drei `<Html>`).
 
