@@ -39,6 +39,7 @@ import {
   headingFor,
   slotFor,
 } from "../../src/simulation/worldLayout.ts";
+import { stationOperator } from "../../src/world/stationPresence.ts";
 import { harness, tickUntil } from "./harness.ts";
 import type { TestReporter } from "./harness.ts";
 
@@ -82,7 +83,11 @@ function makeSubtasks(taskId: string, count: number, done = 0): Subtask[] {
   }));
 }
 
-function makeAgent(id: AgentId, status: AgentStatus): AgentState {
+function makeAgent(
+  id: AgentId,
+  status: AgentStatus,
+  overrides: Partial<AgentState> = {},
+): AgentState {
   return {
     id,
     status,
@@ -96,6 +101,7 @@ function makeAgent(id: AgentId, status: AgentStatus): AgentState {
     path: [],
     facingAgentId: null,
     paused: false,
+    ...overrides,
   };
 }
 
@@ -227,6 +233,51 @@ function runSignatureChecks(reporter: TestReporter): void {
     "the roster is always six agents",
     base.agents.length === 6 &&
       base.agents.every((entry) => entry.name === getAgentProfile(entry.id).name),
+  );
+}
+
+function runOperatorChecks(reporter: TestReporter): void {
+  const { check } = reporter;
+  const atWall = makeAgent("piper", "working", { location: "mission" });
+  const operating = missionView(snapshotWith([], [atWall]), true);
+  const idleAtWall = missionView(
+    snapshotWith([], [makeAgent("piper", "idle", { location: "mission" })]),
+    true,
+  );
+
+  check(
+    "the wall names the agent operating the mission console",
+    operating.operator?.id === "piper" &&
+      operating.operator.name === getAgentProfile("piper").name,
+    operating.operator?.id ?? "none",
+  );
+  check(
+    "walking through Mission Control does not claim the wall",
+    missionView(
+      snapshotWith([], [makeAgent("piper", "walking", { location: "mission" })]),
+      true,
+    ).operator === null,
+  );
+  check(
+    "a paused operator releases the wall",
+    missionView(
+      snapshotWith([], [
+        makeAgent("piper", "working", { location: "mission", paused: true }),
+      ]),
+      true,
+    ).operator === null,
+  );
+  check(
+    "the operator changes the wall signature",
+    missionSignature(operating) !== missionSignature(idleAtWall),
+  );
+  check(
+    "the research board detects the agent working there",
+    stationOperator(
+      snapshotWith([], [makeAgent("iris", "working", { location: "planning" })]),
+      "planning",
+    )?.id === "iris" &&
+      stationOperator(snapshotWith([], [atWall]), "planning") === null,
   );
 }
 
@@ -460,6 +511,7 @@ export function runBoardsSuite(reporter: TestReporter): void {
   runCountsChecks(reporter);
   runActiveTaskChecks(reporter);
   runSignatureChecks(reporter);
+  runOperatorChecks(reporter);
   runPlanningChecks(reporter);
   runLayoutChecks(reporter);
   runPlanningWalkChecks(reporter);

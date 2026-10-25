@@ -9,6 +9,7 @@ import {
   type WorkflowPhase,
 } from "../tasks/taskTypes.ts";
 import { isActiveTask } from "../tasks/taskActions.ts";
+import { stationOperator } from "./stationPresence.ts";
 
 /**
  * Pure mission-control content: phase counts, active task rows, the roster and
@@ -85,11 +86,18 @@ export interface MissionAgentRow {
   statusColor: string;
 }
 
+export interface MissionOperator {
+  id: AgentId;
+  name: string;
+  color: string;
+}
+
 export interface MissionView {
   simulated: boolean;
   counts: readonly number[];
   tasks: readonly MissionTaskRow[];
   agents: readonly MissionAgentRow[];
+  operator: MissionOperator | null;
 }
 
 export const MISSION_ACTIVE_TASK_LIMIT = 4;
@@ -186,6 +194,24 @@ function agentRow(id: AgentId, snapshot: WorldSnapshot | null): MissionAgentRow 
   };
 }
 
+/**
+ * The agent currently driving the wall from the mission console. Only an
+ * agent physically at the console and in an active state counts, so the
+ * header never claims control while nobody is there.
+ */
+function missionOperator(
+  snapshot: WorldSnapshot | null,
+): MissionOperator | null {
+  const agent = stationOperator(snapshot, "mission");
+  if (agent === null) return null;
+  const profile = getAgentProfile(agent.id);
+  return {
+    id: agent.id,
+    name: profile.name,
+    color: profile.color,
+  };
+}
+
 /** Everything the wall draws, derived from one snapshot. */
 export function missionView(
   snapshot: WorldSnapshot | null,
@@ -197,6 +223,7 @@ export function missionView(
     counts: phaseCounts(tasks),
     tasks: missionTaskRows(tasks),
     agents: CORE_AGENT_IDS.map((id) => agentRow(id, snapshot)),
+    operator: missionOperator(snapshot),
   };
 }
 
@@ -216,5 +243,6 @@ export function missionSignature(view: MissionView): string {
   const agents = view.agents
     .map((agent) => `${agent.id}:${agent.paused ? "paused" : agent.status}`)
     .join("|");
-  return `${view.simulated ? "sim" : "live"}#${counts}#${tasks}#${agents}`;
+  const operator = view.operator === null ? "none" : view.operator.id;
+  return `${view.simulated ? "sim" : "live"}#${counts}#${tasks}#${agents}#${operator}`;
 }

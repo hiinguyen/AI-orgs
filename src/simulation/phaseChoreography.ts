@@ -183,14 +183,14 @@ export class PhaseChoreography {
     controller.enqueue([
       {
         kind: "move",
-        to: "planning",
-        activity: `Walking to the ${LOCATIONS.planning.label}`,
+        to: "mission",
+        activity: `Walking to ${LOCATIONS.mission.label}`,
       },
       {
         kind: "work",
         duration: durations.breakdown,
         status: "working",
-        activity: `Breaking "${label}" into task cards`,
+        activity: `Controlling the wall: planning "${label}"`,
         onProgress: (progress) =>
           this.ctx.setProgress(task.id, "planning", progress),
         onDone: () => {
@@ -252,14 +252,14 @@ export class PhaseChoreography {
     controller.enqueue([
       {
         kind: "move",
-        to: "research",
-        activity: `Walking to the ${LOCATIONS.research.label}`,
+        to: "planning",
+        activity: `Walking to the ${LOCATIONS.planning.label}`,
       },
       {
         kind: "work",
         duration: durations.research,
         status: "working",
-        activity: `Researching "${label}"`,
+        activity: `Researching "${label}" at the board`,
         onProgress: (progress) =>
           this.ctx.setProgress(task.id, "research", progress),
         onDone: () => {

@@ -7,7 +7,12 @@ import { PLANNING_BOARD_CENTER } from "@/simulation/worldLayout";
 import type { WorldSnapshot } from "@/integrations/AgentBackend";
 import { liveWorld } from "@/state/useWorldStore";
 import { reducedMotion } from "@/state/reducedMotion";
-import { geometries, materials, sharedGeometry } from "./sharedResources";
+import {
+  geometries,
+  materials,
+  sharedGeometry,
+  sharedMaterial,
+} from "./sharedResources";
 import {
   PLANNING_BOARD,
   PLANNING_BOARD_FACE_OFFSET,
@@ -17,6 +22,7 @@ import {
   planningSignature,
   type PlanningCard,
 } from "./planningContent";
+import { stationOperator } from "./stationPresence";
 
 /**
  * Whiteboard with one instanced sticky card per subtask of the active tasks.
@@ -31,6 +37,21 @@ const BOARD_CENTER_Z = PLANNING_BOARD.width / 2;
 const BOARD_BOTTOM_Y = 0.35;
 const CARD_SCALE_SECONDS = 0.3;
 const SIGNATURE_INTERVAL_SECONDS = 0.2;
+const RESEARCH_GLOW_LAMBDA = 5;
+const RESEARCH_IDLE_GLOW = 0.4;
+const RESEARCH_ACTIVE_GLOW = 2.3;
+
+const researchGlowMaterial = sharedMaterial(
+  "planning-research-glow",
+  () =>
+    new THREE.MeshStandardMaterial({
+      color: "#0b1119",
+      emissive: "#5cc8d7",
+      emissiveIntensity: RESEARCH_IDLE_GLOW,
+      roughness: 0.34,
+      metalness: 0.28,
+    }),
+);
 
 const cardGeometry = sharedGeometry(
   "sticky-card",
@@ -162,6 +183,15 @@ export function PlanningBoard() {
     const scratch = scratchRef.current;
     if (!mesh || !scratch) return;
 
+    researchGlowMaterial.emissiveIntensity = THREE.MathUtils.damp(
+      researchGlowMaterial.emissiveIntensity,
+      stationOperator(liveWorld.current, "planning") !== null
+        ? RESEARCH_ACTIVE_GLOW
+        : RESEARCH_IDLE_GLOW,
+      RESEARCH_GLOW_LAMBDA,
+      delta,
+    );
+
     elapsed.current += delta;
     if (elapsed.current >= SIGNATURE_INTERVAL_SECONDS) {
       elapsed.current = 0;
@@ -224,6 +254,12 @@ export function PlanningBoard() {
         material={materials.board}
         position={[PLANNING_BOARD_FACE_OFFSET, 1.55, 0]}
         rotation-y={Math.PI / 2}
+      />
+      <mesh
+        geometry={geometries.box}
+        material={researchGlowMaterial}
+        position={[PLANNING_BOARD_FACE_OFFSET + 0.05, 2.82, 0]}
+        scale={[0.05, 0.03, PLANNING_BOARD.width]}
       />
       <mesh
         geometry={geometries.box}

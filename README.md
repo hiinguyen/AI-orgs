@@ -49,8 +49,8 @@ Without a flag the app picks quality up front from the machine (cores, viewport 
 The **Run demo** button loads a single scripted task and runs it at 1x speed. It completes in about 75 simulation seconds, tick for tick identical on every run:
 
 1. **Intake** - Orion (orchestrator) walks to the Operations Hub, thinks, then talks to Piper. A glowing assignment arc fires and `T-001` becomes hers.
-2. **Planning** - Piper walks to the Planning Board and breaks the task into six subtasks; sticky cards appear on the board as she creates them. She briefs Iris.
-3. **Research** - Iris works at the Research Station, publishes findings, then briefs Kai.
+2. **Planning** - Piper walks to the Mission Control wall and works from its control deck, breaking the task into six subtasks; sticky cards appear on the planning board as she creates them. The wall header shows `WALL CONTROL / PIPER`. She briefs Iris.
+3. **Research** - Iris works at the planning board in the left corner, publishes findings, then briefs Kai.
 4. **Implementation** - Kai works at the Engineering Station; his monitors glow while he types, subtasks tick off, the mission-control wall tracks progress. He submits the build to Quinn.
 5. **Testing** - Quinn runs the test suite at the QA Lab - and the demo task is scripted to **fail** on the first attempt. Quinn shows a red pulse, buzzes, and reports back to Kai.
 6. **Rework** - Kai returns to his desk, fixes the failing test (iteration 2) and submits again. Quinn's tests pass this time; Rex gets the build.
@@ -74,7 +74,7 @@ Each role has a distinct rig: Orion is taller with a crown-like visor, Iris has 
 
 ## Feature tour
 
-**The world.** A dark glass office at blue hour: procedural floor tiles, a dusk-gradient window wall with an instanced skyline of ~260 towers behind it, low glass partitions between zones, plants, drifting dust motes. One wall carries the **mission-control screen** - a canvas texture that redraws a few times per second with active task titles, phases, progress bars and agent statuses, only when the content actually changed. The **planning board** holds up to 24 sticky cards that appear as subtasks are created and change tint when they are done. Desks have chairs and monitors with a scrolling procedural "code" screen whose emissive glow rises while the owner works.
+**The world.** A dark glass office at blue hour: procedural floor tiles, a dusk-gradient window wall with an instanced skyline of ~260 towers behind it, low glass partitions between zones, plants, drifting dust motes. One wall carries the **mission-control screen** - a canvas texture that redraws a few times per second with active task titles, phases, progress bars and agent statuses, only when the content actually changed. Its control deck glows violet while an agent operates the wall, and the header names that operator. The **planning board** holds up to 24 sticky cards that appear as subtasks are created and change tint when they are done; its cyan edge strip brightens while the researcher works there. Desks have chairs and monitors with a scrolling procedural "code" screen whose emissive glow rises while the owner works.
 
 **The agents.** Procedural robots with a blended pose system: idle breathing, walking driven by actual speed, typing, thinking (head tilt, hand to chin), talking gestures, a success bounce and an error slump. Each agent trails a path of small discs flowing along their remaining route, with a breathing ring at the destination. Communication is drawn as a glowing bezier arc between the two agents with instanced packet sprites travelling along it. Speech bubbles are DOM pills that track the 3D position of each agent (see [engineering notes](#engineering-notes-why-the-code-looks-like-this) for why they are not drei `<Html>`).
 

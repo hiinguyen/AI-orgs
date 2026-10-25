@@ -19,6 +19,7 @@ export type LocationId =
   | "dev"
   | "testing"
   | "review"
+  | "mission"
   | "planning"
   | "collab"
   | "lounge"
@@ -42,6 +43,16 @@ export interface WorldLocation {
 
 export const HUB_CENTER: Vec2 = { x: 0, z: -0.6 };
 export const MISSION_CONTROL: Vec2 = { x: 0, z: -7.4 };
+/**
+ * Control console between the wall and the room. The two stand slots sit off
+ * the centre line so the walk from the corridor never passes through the
+ * Operations Hub, and Piper reaches the console without stepping over it.
+ */
+export const MISSION_CONSOLE: Vec2 = { x: 0, z: -6.55 };
+export const MISSION_STAND_SLOTS: readonly Vec2[] = [
+  { x: -2.2, z: -5.35 },
+  { x: 2.2, z: -5.35 },
+];
 /** Angled whiteboard in the collaboration corner, clear of the walking corridor. */
 export const PLANNING_BOARD_CENTER: Vec2 = { x: -10.8, z: 5.1 };
 
@@ -151,6 +162,13 @@ export const LOCATIONS: Record<LocationId, WorldLocation> = {
     facing: Math.PI,
     zone: "development",
   },
+  mission: {
+    id: "mission",
+    label: "Mission Control",
+    slots: MISSION_STAND_SLOTS,
+    facing: Math.PI,
+    zone: "operations",
+  },
   planning: {
     id: "planning",
     label: "Planning Board",
@@ -194,6 +212,7 @@ export const LOCATION_IDS: readonly LocationId[] = [
   "dev",
   "testing",
   "review",
+  "mission",
   "planning",
   "collab",
   "lounge",
