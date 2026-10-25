@@ -196,6 +196,12 @@ export class LiveStage {
     { status: AgentStatus; activity: string }
   >();
 
+  /** Transient core outcomes, shown over the overrides until `until`. */
+  private readonly coreFlashes = new Map<
+    AgentId,
+    { status: AgentStatus; activity: string; until: number }
+  >();
+
   /** Spawn requests refused because the cap was reached. */
   droppedSpawns = 0;
 
@@ -379,6 +385,26 @@ export class LiveStage {
     });
   }
 
+  /**
+   * Flash a core agent with a success or error outcome for `durationMs` of
+   * stage time. The persistent override is untouched and shows again once the
+   * flash expires; a new flash on the same agent replaces the old one.
+   */
+  flashCore(
+    id: AgentId,
+    status: "success" | "error",
+    activity: string,
+    durationMs: number,
+  ): void {
+    if (!CORE_AGENTS.some((profile) => profile.id === id)) return;
+    if (!Number.isFinite(durationMs) || durationMs <= 0) return;
+    this.coreFlashes.set(id, {
+      status,
+      activity: truncatedActivity(activity),
+      until: this.clockSeconds + durationMs / 1000,
+    });
+  }
+
   /** Add a communication arc between two agents. */
   link(from: AgentId, to: AgentId, kind: CommLink["kind"]): void {
     this.linkSeq += 1;
@@ -450,6 +476,7 @@ export class LiveStage {
     this.links.length = 0;
     this.pendingEvents.length = 0;
     this.coreOverrides.clear();
+    this.coreFlashes.clear();
     this.clockSeconds = 0;
     this.status = "ready";
     this.globalPaused = false;
@@ -490,6 +517,10 @@ export class LiveStage {
       this.promoteWaiting();
     }
 
+    for (const [id, flash] of this.coreFlashes) {
+      if (flash.until <= this.clockSeconds) this.coreFlashes.delete(id);
+    }
+
     this.links.splice(
       0,
       this.links.length,
@@ -501,7 +532,10 @@ export class LiveStage {
   snapshot(): WorldSnapshot {
     const coreStates: AgentState[] = CORE_AGENTS.map((profile) => {
       const base = coreState(profile);
-      const override = this.coreOverrides.get(profile.id);
+      const stored = this.coreOverrides.get(profile.id);
+      const flash = this.coreFlashes.get(profile.id);
+      const override =
+        flash !== undefined && flash.until > this.clockSeconds ? flash : stored;
       return {
         ...base,
         status: override?.status ?? base.status,

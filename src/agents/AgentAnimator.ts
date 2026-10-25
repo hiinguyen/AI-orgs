@@ -198,13 +198,13 @@ export function workingPose(
   const typing = motionAmplitude(calm, Math.sin(time * 9.5));
   pose.bodyLift = 0.004 + motionAmplitude(calm, Math.sin(time * 2.2) * 0.004);
   pose.bodyPitch = 0.15;
-  pose.headPitch = 0.17;
+  pose.headPitch = 0.17 + motionAmplitude(calm, Math.sin(time * 4.7) * 0.05);
   pose.headYaw = motionAmplitude(calm, Math.sin(time * 0.8) * 0.03);
   pose.headRoll = 0;
   // Arms reach forward and inwards, hands about a keyboard width apart.
-  pose.armLeftX = -0.95 + typing * 0.12;
+  pose.armLeftX = -1.05 + typing * 0.22;
   pose.armLeftZ = TYPING_ARM_SPREAD;
-  pose.armRightX = -0.95 - typing * 0.12;
+  pose.armRightX = -1.05 - typing * 0.22;
   pose.armRightZ = -TYPING_ARM_SPREAD;
   pose.legLeftX = 0;
   pose.legRightX = 0;
@@ -220,11 +220,11 @@ export function thinkingPose(
   pose.bodyLift = 0.006 + motionAmplitude(calm, Math.sin(time * 1.4) * 0.004);
   pose.bodyPitch = 0.02;
   pose.headPitch = -0.06 + motionAmplitude(calm, Math.sin(time * 0.9) * 0.02);
-  pose.headYaw = -0.18;
-  pose.headRoll = 0.16;
+  pose.headYaw = -0.18 + motionAmplitude(calm, Math.sin(time * 0.9) * 0.1);
+  pose.headRoll = 0.16 + motionAmplitude(calm, Math.sin(time * 0.7) * 0.04);
   pose.armLeftX = 0.04;
   pose.armLeftZ = -0.08;
-  pose.armRightX = -1.92 + motionAmplitude(calm, Math.sin(time * 1.2) * 0.05);
+  pose.armRightX = -1.92 + motionAmplitude(calm, Math.sin(time * 2.6) * 0.12);
   pose.armRightZ = -0.55;
   pose.legLeftX = 0;
   pose.legRightX = 0;

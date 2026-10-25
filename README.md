@@ -229,7 +229,20 @@ Snapshots arrive on connect and on change; `links` are communication arcs the 3D
 
 ## Connecting Claude Code
 
-The bridge lets a real Claude Code run drive the 3D world. Claude Code hooks POST their JSON to a local server, which maps the main conversation to Orion and every subagent instance to its own live robot: tool calls become activity, `SubagentStart` spawns a robot and `SubagentStop` sends it home.
+The bridge lets a real Claude Code run drive the 3D world. Claude Code hooks POST their JSON to a local server, which gives every Claude Code session its own live robot, named after the session's working directory folder (for example `my-repo #1`), and every subagent instance its own robot hanging off its session's robot: tool calls become activity, `SubagentStart` spawns a robot and `SubagentStop` sends it home, and `SessionEnd` removes the session robot with its subagents.
+Live robots also mirror their activity and status onto the core agent that matches their role, so the six core agents are no longer idle fixtures.
+Core agents return to idle when no live agent of their role remains.
+When several live agents share a role, the core agent shows whichever wrote last, so its text and status can come from different agents on status-only updates.
+Orion also remains the fallback driver when the live agent cap is full.
+
+| Live agent role | Claude Code source | Core agent |
+| --- | --- | --- |
+| orchestrator | session robot | Orion |
+| researcher | `explore`, `research`, `docs`, `lookup`, `scout` subagents | Iris |
+| product_manager | `plan`, `architect`, `design` subagents | Piper |
+| engineer | any other subagent type | Kai |
+| qa | `test`, `tdd`, `e2e`, `qa` subagents | Quinn |
+| reviewer | `review`, `audit` subagents | Rex |
 
 1. Start the bridge in one terminal:
 
@@ -258,7 +271,12 @@ The bridge lets a real Claude Code run drive the 3D world. Claude Code hooks POS
 
 4. Optional: watch without Claude Code. `npm run bridge:replay` posts a scripted session with four parallel `code-reviewer` subagents, a `tdd-guide`, tool calls, a failure and two agents that stay running.
 
-The bridge is read-only by design. Run demo, Load sprint, New task, the speed control and the per-agent Pause button are hidden because the bridge cannot submit tasks, pause agents or change speed; the commands still answer with a friendly "not supported". Tasks and Mission Control stay empty. Several Claude Code sessions feed one merged world with one Orion. There is no event for a cancelled or crashed subagent, so an agent with no hook for 10 minutes despawns as an error with "Lost contact". Nested and background subagent hook behavior is not confirmed.
+The bridge is read-only by design. Run demo, Load sprint, New task, the speed control and the per-agent Pause button are hidden because the bridge cannot submit tasks, pause agents or change speed; the commands still answer with a friendly "not supported". Tasks and Mission Control stay empty. Several Claude Code sessions are separate robots in one world; live agents (sessions and subagents) share the 64 agent cap, and when it is full a session falls back to driving Orion. OpenCode and other non-Claude-Code agents send no hooks, so they do not appear. Subagents with an empty `agent_type` (Claude Code internal agents) are ignored on purpose. There is no event for a cancelled or crashed subagent, so a subagent with no hook for 10 minutes despawns as an error with "Lost contact". A session with 10 minutes of silence leaves quietly and comes back as a new robot on its next hook. Nested and background subagent hook behavior is not confirmed.
+
+The six core agents mirror the live agents of their role.
+A finished subagent flashes its core agent as success for 2.5 seconds, a lost subagent flashes error for 2.5 seconds, then the core agent shows its persistent idle, working or thinking state again.
+A failed tool call flashes error for 1.5 seconds on the core agent that mirrors the failing robot, including Orion when it is the fallback driver.
+In websocket mode a working or thinking core agent also shows a speech bubble with its current activity, and this bubble follows the speech-indicators toggle.
 
 The bridge never stores or forwards prompts, tool responses, transcript paths or full assistant messages. Activity text is limited to the tool name, a file path relative to the hook `cwd`, the first 60 characters of a masked Bash command, an `Agent`/`Task` description, or a 120 character truncated summary. `redact()` masks `Authorization`/`Bearer` values, `token`, `password` and `api_key` assignments, `sk-` keys, GitHub tokens and AWS access key shapes. Hook requests with an `Origin` header, a non-JSON content type, a body over 256 KiB or malformed fields are rejected; the server binds loopback only and caps hook calls at 200 per second.
 

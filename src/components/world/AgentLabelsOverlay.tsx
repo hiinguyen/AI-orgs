@@ -128,6 +128,10 @@ export function AgentLabelsOverlay() {
     (state) => state.overlays.speechIndicators,
   );
 
+  const isLiveBackend = useWorldStore(
+    (state) => state.backend.kind === "websocket",
+  );
+
   const bubbleRefs = useRef<Map<AgentId, HTMLDivElement>>(new Map());
   const bubbleSizes = useRef<Map<AgentId, BubbleSize>>(new Map());
   const anchorMemory = useRef<Map<AgentId, AnchorMemory>>(new Map());
@@ -267,7 +271,12 @@ export function AgentLabelsOverlay() {
           (speechIndicators &&
             (agent.status === "communicating" ||
               agent.status === "success" ||
-              agent.status === "error"));
+              agent.status === "error" ||
+              // Live mode: say what each busy core agent is doing.
+              (isLiveBackend &&
+                profile.kind === "core" &&
+                (agent.status === "working" || agent.status === "thinking") &&
+                agent.activity.length > 0)));
 
         return (
           <AgentBubble

@@ -341,10 +341,10 @@ async function runWebSocketSessionSuite(
     await client.waitFor(
       () =>
         lastSnapshot(client.messages)?.agents.find(
-          (agent) => agent.id === "orion",
+          (agent) => agent.id === "session-http",
         )?.status === "thinking",
       3000,
-      "Orion thinking",
+      "the session robot thinking",
     );
     check(
       "a hook reaches the client as an event and a snapshot",
@@ -588,8 +588,9 @@ async function runNoClientCapSuite(reporter: TestReporter): Promise<void> {
       const ids = snapshot?.agents.map((agent) => agent.id) ?? [];
       const live = ids.filter((id) => id.startsWith("agent-"));
       check(
-        "a late client sees the 6 new agents plus core agents only",
-        snapshot?.agents.length === 12 &&
+        "a late client sees the session robot, 6 new agents and core agents only",
+        snapshot?.agents.length === 13 &&
+          ids.includes("session-http") &&
           live.length === 6 &&
           live.every((id) => id.startsWith("agent-new-")),
       );

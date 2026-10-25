@@ -13,9 +13,40 @@ import {
   poseFor,
   poseForState,
 } from "../../src/agents/AgentAnimator.ts";
+import type { AgentPose } from "../../src/agents/AgentAnimator.ts";
+import type { AgentStatus } from "../../src/agents/agentTypes.ts";
 import type { TestReporter } from "./harness.ts";
 
 const QUARTER = Math.PI / 2;
+const STATES: readonly AgentStatus[] = [
+  "idle",
+  "walking",
+  "working",
+  "thinking",
+  "communicating",
+  "success",
+  "error",
+];
+
+/** Sample one full cycle of the working and thinking poses, 0 to 6.3 s. */
+function sampleTimes(): number[] {
+  return Array.from({ length: 127 }, (_, index) => index * 0.05);
+}
+
+function poseSeries(
+  state: AgentStatus,
+  calm: boolean,
+  field: keyof AgentPose,
+): number[] {
+  return sampleTimes().map(
+    (time) =>
+      poseFor(state, time, 0, DEFAULT_LEG_LENGTH, undefined, calm)[field],
+  );
+}
+
+function peakToPeak(values: readonly number[]): number {
+  return Math.max(...values) - Math.min(...values);
+}
 
 function samePose(
   left: ReturnType<typeof createPose>,
@@ -137,5 +168,54 @@ export function runReducedMotionSuite(reporter: TestReporter): void {
         ).every((value) => Number.isFinite(value)),
     ) &&
       Object.values(scratch).every((value) => Number.isFinite(value)),
+  );
+
+  group("Working and thinking motion");
+
+  check(
+    "typing swings the hands at least 0.4 rad peak to peak",
+    peakToPeak(poseSeries("working", false, "armLeftX")) >= 0.4,
+  );
+  check(
+    "thinking hand taps the chin at least 0.2 rad peak to peak",
+    peakToPeak(poseSeries("thinking", false, "armRightX")) >= 0.2,
+  );
+  check(
+    "working head nods at least 0.08 rad peak to peak",
+    peakToPeak(poseSeries("working", false, "headPitch")) >= 0.08,
+  );
+  check(
+    "idle arm sway stays under 0.12 rad peak to peak",
+    peakToPeak(poseSeries("idle", false, "armLeftX")) <= 0.12,
+  );
+
+  const CALM_FIELDS: readonly (keyof AgentPose)[] = [
+    "armLeftX",
+    "armRightX",
+    "headPitch",
+    "headYaw",
+    "headRoll",
+    "bodyLift",
+  ];
+  check(
+    "working and thinking hold still under reduced motion",
+    (["working", "thinking"] as const).every((state) =>
+      CALM_FIELDS.every(
+        (field) => peakToPeak(poseSeries(state, true, field)) === 0,
+      ),
+    ),
+  );
+
+  check(
+    "every pose field stays finite over the sampled cycle",
+    STATES.every((state) =>
+      [false, true].every((calm) =>
+        sampleTimes().every((time) =>
+          Object.values(
+            poseFor(state, time, 2.4, DEFAULT_LEG_LENGTH, QUARTER, calm),
+          ).every((value) => Number.isFinite(value)),
+        ),
+      ),
+    ),
   );
 }
