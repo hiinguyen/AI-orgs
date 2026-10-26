@@ -1043,9 +1043,16 @@ function runMultiSessionSuite(reporter: TestReporter): void {
   );
 }
 
-function coreOf(stage: LiveStage, id: string): { status: string; activity: string } {
+function coreOf(
+  stage: LiveStage,
+  id: string,
+): { status: string; activity: string; location: string | null } {
   const agent = stage.snapshot().agents.find((entry) => entry.id === id);
-  return { status: agent?.status ?? "missing", activity: agent?.activity ?? "missing" };
+  return {
+    status: agent?.status ?? "missing",
+    activity: agent?.activity ?? "missing",
+    location: agent?.location ?? null,
+  };
 }
 
 function startSub(
@@ -1128,6 +1135,10 @@ function runCoreMirrorSuite(reporter: TestReporter): void {
   startSub(roles, "q-1", "tdd-guide");
   startSub(roles, "k-1", "something-else");
   startSub(roles, "i-1", "explore");
+  // Piper and Iris walk to their boards first; let that finish before reading
+  // their mirrored status back (orion/quinn/kai have no board and are
+  // unaffected by the extra ticks).
+  advanceStage(roles.stage, 3);
   const thinking = (id: string): boolean => coreOf(roles.stage, id).status === "thinking";
   check(
     "session mirrors to orion, planner to piper, tdd-guide to quinn, unknown to kai, explore to iris",
@@ -1340,6 +1351,71 @@ function runCoreMirrorSuite(reporter: TestReporter): void {
   );
 }
 
+function runBoardWalkSuite(reporter: TestReporter): void {
+  const { check, group } = reporter;
+  group("51b. Live mode walks Piper/Iris to their boards");
+
+  const planning = setupStage();
+  startSub(planning, "p-1", "planner");
+  advanceStage(planning.stage, 3);
+  check(
+    "a plan subagent walks Piper to the Sprint Planning board",
+    coreOf(planning.stage, "piper").location === "planning",
+  );
+  stopSub(planning, "p-1", "planner");
+  advanceStage(planning.stage, 3);
+  check(
+    "Piper walks back to the Product Station once the planner stops",
+    coreOf(planning.stage, "piper").location === "product",
+  );
+
+  const research = setupStage();
+  startSub(research, "i-1", "explore");
+  advanceStage(research.stage, 3);
+  check(
+    "an explore subagent walks Iris to the Research Board",
+    coreOf(research.stage, "iris").location === "researchBoard",
+  );
+  stopSub(research, "i-1", "explore");
+  advanceStage(research.stage, 3);
+  check(
+    "Iris walks back to the Research Station once the explorer stops",
+    coreOf(research.stage, "iris").location === "research",
+  );
+
+  const concurrent = setupStage();
+  startSub(concurrent, "p-1", "planner");
+  startSub(concurrent, "p-2", "architect");
+  advanceStage(concurrent.stage, 3);
+  stopSub(concurrent, "p-1", "planner");
+  advanceStage(concurrent.stage, 3);
+  check(
+    "Piper stays at the board while a second planner subagent is still running",
+    coreOf(concurrent.stage, "piper").location === "planning",
+  );
+  stopSub(concurrent, "p-2", "architect");
+  advanceStage(concurrent.stage, 3);
+  check(
+    "Piper walks home once every planner subagent has stopped",
+    coreOf(concurrent.stage, "piper").location === "product",
+  );
+
+  const untouched = setupStage();
+  startSub(untouched, "p-1", "planner");
+  startSub(untouched, "i-1", "explore");
+  startSub(untouched, "k-1", "something-else");
+  startSub(untouched, "q-1", "tdd-guide");
+  startSub(untouched, "r-1", "code-reviewer");
+  advanceStage(untouched.stage, 3);
+  check(
+    "Orion, Kai, Quinn and Rex never leave their home station",
+    coreOf(untouched.stage, "orion").location === "hub" &&
+      coreOf(untouched.stage, "kai").location === "dev" &&
+      coreOf(untouched.stage, "quinn").location === "testing" &&
+      coreOf(untouched.stage, "rex").location === "review",
+  );
+}
+
 /** Advance the stage clock by `seconds`, in ticks the stage accepts. */
 function advanceStage(stage: LiveStage, seconds: number): void {
   for (let elapsed = 0; elapsed < seconds; elapsed += 0.1) stage.tick(0.1);
@@ -1525,5 +1601,6 @@ export function runBridgeMappingSuites(reporter: TestReporter): void {
   runBoundsSuite(reporter);
   runMultiSessionSuite(reporter);
   runCoreMirrorSuite(reporter);
+  runBoardWalkSuite(reporter);
   runCoreFlashSuite(reporter);
 }

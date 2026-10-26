@@ -242,7 +242,7 @@ function sessionActor(
   if (stage.spawn(profile, { workSeconds: 0 }) === null) return ORION;
   commitOrdinal(state, key, ordinal);
   trackAgent(state, id, id);
-  registerMirror(state, id, profile.role);
+  registerMirror(stage, state, id, profile.role);
   state.lastSeen.set(id, now);
   return id;
 }
@@ -303,8 +303,13 @@ function trackAgent(
   state.sessionAgents.set(sessionId, agents);
 }
 
-/** Register a live agent as an owner of the core agent for its role. */
+/**
+ * Register a live agent as an owner of the core agent for its role. The
+ * first owner of a role with a board (product_manager -> Piper, researcher
+ * -> Iris) sends that core agent walking to it.
+ */
 function registerMirror(
+  stage: LiveStage,
   state: BridgeMappingState,
   agentId: string,
   role: AgentRole,
@@ -312,8 +317,10 @@ function registerMirror(
   const coreId = CORE_AGENT_FOR_ROLE[role];
   state.agentRole.set(agentId, role);
   const owners = state.coreOwners.get(coreId) ?? new Set<string>();
+  const wasEmpty = owners.size === 0;
   owners.add(agentId);
   state.coreOwners.set(coreId, owners);
+  if (wasEmpty) stage.sendCoreToBoard(coreId);
 }
 
 /** Core agent mirroring this live agent, or null when it is not registered. */
@@ -337,6 +344,7 @@ function releaseMirror(
   if (owners.size > 0) return;
   state.coreOwners.delete(coreId);
   setCoreIdle(stage, coreId);
+  stage.sendCoreHome(coreId);
 }
 
 /** Put a core agent back to its default idle activity. */
@@ -514,7 +522,7 @@ function handleSubagentStart(
   commitOrdinal(state, key, ordinal);
 
   trackAgent(state, payload.sessionId, payload.agentId);
-  registerMirror(state, payload.agentId, role);
+  registerMirror(stage, state, payload.agentId, role);
   state.lastSeen.set(payload.agentId, now);
 
   const description = takeAgentDescription(state, payload.agentType);

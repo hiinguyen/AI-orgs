@@ -23,6 +23,7 @@ import {
   bayStand,
   routeToBay,
 } from "./bays.ts";
+import type { LocationId } from "./worldLayout.ts";
 import { headingFor, route, slotFor } from "./worldLayout.ts";
 
 /**
@@ -129,6 +130,23 @@ function coreState(profile: AgentProfile): AgentState {
 }
 
 /**
+ * The two core agents with a board to visit in live mode. Every other core
+ * agent stays fixed at its home station regardless of live subagent activity.
+ */
+const CORE_BOARD_LOCATION: Partial<Record<AgentId, LocationId>> = {
+  piper: "planning",
+  iris: "researchBoard",
+};
+
+interface CoreMotionState {
+  phase: "to-board" | "at-board" | "to-home";
+  position: Vec2;
+  heading: number;
+  path: Vec2[];
+  location: LocationId | null;
+}
+
+/**
  * Move a point along a routed path at `speed`, returning the consumed step and
  * the last heading it faced. Mutates both the position and the path.
  */
@@ -200,6 +218,8 @@ export class LiveStage {
     AgentId,
     { status: AgentStatus; activity: string }
   >();
+  /** Walking state for the core agents that have a board (Piper, Iris). */
+  private readonly coreMotion = new Map<AgentId, CoreMotionState>();
 
   /** Transient core outcomes, shown over the overrides until `until`. */
   private readonly coreFlashes = new Map<
@@ -410,6 +430,55 @@ export class LiveStage {
     });
   }
 
+  /**
+   * Walk a core agent with a board (Piper, Iris) from wherever it is to that
+   * board. No-op for a core agent without a board, or one already heading to
+   * or standing at it.
+   */
+  sendCoreToBoard(id: AgentId): void {
+    const boardLocation = CORE_BOARD_LOCATION[id];
+    if (boardLocation === undefined) return;
+    const existing = this.coreMotion.get(id);
+    if (
+      existing !== undefined &&
+      (existing.phase === "to-board" || existing.phase === "at-board")
+    ) {
+      return;
+    }
+    const profile = CORE_AGENTS.find((candidate) => candidate.id === id);
+    if (profile === undefined) return;
+    const home = profile.home ?? "hub";
+    const from = existing?.position ?? slotFor(home, profile.seat);
+    const target = slotFor(boardLocation, profile.seat);
+    this.coreMotion.set(id, {
+      phase: "to-board",
+      position: { ...from },
+      heading: existing?.heading ?? headingFor(home, profile.seat),
+      path: route(from, target),
+      location: null,
+    });
+  }
+
+  /**
+   * Walk a core agent with a board back to its home station. No-op when it
+   * has no motion entry (already home) or is already heading there.
+   */
+  sendCoreHome(id: AgentId): void {
+    const existing = this.coreMotion.get(id);
+    if (existing === undefined || existing.phase === "to-home") return;
+    const profile = CORE_AGENTS.find((candidate) => candidate.id === id);
+    if (profile === undefined) return;
+    const home = profile.home ?? "hub";
+    const target = slotFor(home, profile.seat);
+    this.coreMotion.set(id, {
+      phase: "to-home",
+      position: { ...existing.position },
+      heading: existing.heading,
+      path: route(existing.position, target),
+      location: null,
+    });
+  }
+
   /** Add a communication arc between two agents. */
   link(from: AgentId, to: AgentId, kind: CommLink["kind"]): void {
     this.linkSeq += 1;
@@ -482,6 +551,7 @@ export class LiveStage {
     this.pendingEvents.length = 0;
     this.coreOverrides.clear();
     this.coreFlashes.clear();
+    this.coreMotion.clear();
     this.clockSeconds = 0;
     this.status = "ready";
     this.globalPaused = false;
@@ -522,6 +592,19 @@ export class LiveStage {
       this.promoteWaiting();
     }
 
+    for (const [id, motion] of this.coreMotion) {
+      if (motion.path.length === 0) continue;
+      const movement = advance(motion.position, motion.path, step * this.walkSpeed);
+      if (movement.heading !== null) motion.heading = movement.heading;
+      if (motion.path.length > 0) continue;
+      if (motion.phase === "to-board") {
+        motion.phase = "at-board";
+        motion.location = CORE_BOARD_LOCATION[id] ?? null;
+      } else if (motion.phase === "to-home") {
+        this.coreMotion.delete(id);
+      }
+    }
+
     for (const [id, flash] of this.coreFlashes) {
       if (flash.until <= this.clockSeconds) this.coreFlashes.delete(id);
     }
@@ -536,14 +619,31 @@ export class LiveStage {
   /** A complete snapshot in the phase 9 wire shape. */
   snapshot(): WorldSnapshot {
     const coreStates: AgentState[] = CORE_AGENTS.map((profile) => {
-      const base = coreState(profile);
+      const motion = this.coreMotion.get(profile.id);
+      const base =
+        motion === undefined
+          ? coreState(profile)
+          : {
+              ...coreState(profile),
+              location: motion.location,
+              destination:
+                motion.phase === "to-board"
+                  ? (CORE_BOARD_LOCATION[profile.id] ?? null)
+                  : motion.phase === "to-home"
+                    ? (profile.home ?? "hub")
+                    : null,
+              position: { x: motion.position.x, z: motion.position.z },
+              heading: motion.heading,
+              path: motion.path.map((point) => ({ ...point })),
+            };
       const stored = this.coreOverrides.get(profile.id);
       const flash = this.coreFlashes.get(profile.id);
       const override =
         flash !== undefined && flash.until > this.clockSeconds ? flash : stored;
+      const walking = motion !== undefined && motion.path.length > 0;
       return {
         ...base,
-        status: override?.status ?? base.status,
+        status: walking ? "walking" : (override?.status ?? base.status),
         activity: override?.activity ?? base.activity,
         paused: this.globalPaused,
       };
