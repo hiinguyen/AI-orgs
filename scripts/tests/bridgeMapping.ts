@@ -238,6 +238,17 @@ function runSubagentToolSuite(reporter: TestReporter): void {
     }),
     1000,
   );
+  const assignEvents = stage.drainEvents();
+  check(
+    "SubagentStart emits a task.assigned event targeting the new subagent",
+    assignEvents.some(
+      (event) =>
+        event.type === "task.assigned" &&
+        event.targetAgentId === "agent-tool" &&
+        event.agentId === "session-1" &&
+        event.feed,
+    ),
+  );
   applyHook(
     stage,
     state,
@@ -347,6 +358,16 @@ function runStopSuite(reporter: TestReporter): void {
         event.type === "agent.despawned" &&
         event.metadata?.outcome === "success" &&
         typeof event.metadata.duration === "number",
+    ),
+  );
+  check(
+    "SubagentStop emits an agent.message event reporting back to the owner",
+    stopEvents.some(
+      (event) =>
+        event.type === "agent.message" &&
+        event.agentId === "agent-stop" &&
+        event.targetAgentId === "session-1" &&
+        event.feed,
     ),
   );
 

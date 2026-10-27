@@ -400,6 +400,15 @@ function flashOutcome(
   if (coreId !== null) stage.flashCore(coreId, status, text, durationMs);
 }
 
+/** A human-readable name for a core or live agent id, for event messages. */
+function displayName(stage: LiveStage, id: AgentId): string {
+  return (
+    CORE_AGENTS.find((core) => core.id === id)?.name ??
+    stage.getAgent(id)?.profile.name ??
+    id
+  );
+}
+
 /** Drop an agent from the session, reaper and core mirror bookkeeping. */
 export function forgetAgent(
   stage: LiveStage,
@@ -534,6 +543,16 @@ function handleSubagentStart(
     "thinking",
   );
   stage.link(parent, payload.agentId, "assign");
+  stage.emit(
+    "task.assigned",
+    `${displayName(stage, parent)} assigned work to ${name}`,
+    {
+      agentId: parent,
+      targetAgentId: payload.agentId,
+      severity: "info",
+      feed: true,
+    },
+  );
 }
 
 function handleSubagentStop(
@@ -566,6 +585,16 @@ function handleSubagentStop(
   const owner = ownerId !== undefined && stage.has(ownerId) ? ownerId : ORION;
   touchSession(stage, state, payload, now);
   stage.link(payload.agentId, owner, "report");
+  stage.emit(
+    "agent.message",
+    `${displayName(stage, payload.agentId)} reported back to ${displayName(stage, owner)}`,
+    {
+      agentId: payload.agentId,
+      targetAgentId: owner,
+      severity: "info",
+      feed: true,
+    },
+  );
   forgetAgent(stage, state, payload.agentId);
 }
 
