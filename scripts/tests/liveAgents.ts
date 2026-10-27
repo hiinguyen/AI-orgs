@@ -350,6 +350,17 @@ function runLookupSuite(reporter: TestReporter): void {
       return found.name === profile.name && found.kind === "live";
     })(),
   );
+  check(
+    "a profile stays resolvable after its agent leaves the snapshot",
+    (() => {
+      const profile = makeLiveProfile(10);
+      setAnnouncedProfiles([profile]);
+      // The agent finishes and is no longer in the next snapshot.
+      setAnnouncedProfiles([makeLiveProfile(11)]);
+      const found = getAgentProfile(profile.id);
+      return found.name === profile.name && found.kind === "live";
+    })(),
+  );
 }
 
 function runColorAndPitchSuite(reporter: TestReporter): void {
