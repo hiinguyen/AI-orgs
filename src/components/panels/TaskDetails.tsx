@@ -111,133 +111,145 @@ export function TaskDetails({ taskId }: { taskId: string }) {
             className="mt-0.5 shrink-0"
           />
           <p>
-            Failed after {Math.max(1, task.iteration)}{" "}
-            {task.iteration === 1 ? "iteration" : "iterations"}. QA or review
-            kept rejecting the work, so the orchestrator stopped it.
+            {simulated
+              ? `Failed after ${Math.max(1, task.iteration)} ${
+                  task.iteration === 1 ? "iteration" : "iterations"
+                }. QA or review kept rejecting the work, so the orchestrator stopped it.`
+              : `Failed - ${task.blockedReason ?? "the agent stopped with an error or lost contact."}`}
           </p>
         </div>
       )}
 
       <div className="my-3.5 h-px bg-white/[0.06]" />
 
-      <p className="eyebrow">Workflow</p>
-      <ol className="mt-1.5 space-y-0.5">
-        {rows.map((row) => {
-          const rowOwner = row.ownerId ? getAgentProfile(row.ownerId) : null;
-          const active = row.state === "current" || row.state === "failed";
-          return (
-            <li
-              key={row.phase}
-              className={cn(
-                "flex items-center gap-2 rounded-md px-2 py-1.5",
-                active && "bg-white/[0.05]",
-              )}
-            >
-              <WorkflowMarker
-                state={row.state}
-                color={
-                  row.state === "failed"
-                    ? "var(--color-bad)"
-                    : rowOwner?.color
-                }
-              />
-              <span
-                className={cn(
-                  "text-[12px] leading-none",
-                  row.state === "pending" && "text-mist-500",
-                  row.state === "failed" && "text-bad",
-                  (row.state === "done" || row.state === "current") &&
-                    "text-mist-100",
-                )}
-              >
-                {PHASE_LABELS[row.phase]}
-              </span>
-              <span
-                className="ml-auto text-[11px] leading-none"
-                style={{
-                  color:
-                    row.state === "failed"
-                      ? "var(--color-bad)"
-                      : active && rowOwner
-                        ? rowOwner.color
-                        : "var(--color-mist-500)",
-                }}
-              >
-                {rowOwner?.name ?? ""}
-              </span>
-            </li>
-          );
-        })}
-      </ol>
+      {simulated ? (
+        <>
+          <p className="eyebrow">Workflow</p>
+          <ol className="mt-1.5 space-y-0.5">
+            {rows.map((row) => {
+              const rowOwner = row.ownerId ? getAgentProfile(row.ownerId) : null;
+              const active = row.state === "current" || row.state === "failed";
+              return (
+                <li
+                  key={row.phase}
+                  className={cn(
+                    "flex items-center gap-2 rounded-md px-2 py-1.5",
+                    active && "bg-white/[0.05]",
+                  )}
+                >
+                  <WorkflowMarker
+                    state={row.state}
+                    color={
+                      row.state === "failed"
+                        ? "var(--color-bad)"
+                        : rowOwner?.color
+                    }
+                  />
+                  <span
+                    className={cn(
+                      "text-[12px] leading-none",
+                      row.state === "pending" && "text-mist-500",
+                      row.state === "failed" && "text-bad",
+                      (row.state === "done" || row.state === "current") &&
+                        "text-mist-100",
+                    )}
+                  >
+                    {PHASE_LABELS[row.phase]}
+                  </span>
+                  <span
+                    className="ml-auto text-[11px] leading-none"
+                    style={{
+                      color:
+                        row.state === "failed"
+                          ? "var(--color-bad)"
+                          : active && rowOwner
+                            ? rowOwner.color
+                            : "var(--color-mist-500)",
+                    }}
+                  >
+                    {rowOwner?.name ?? ""}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
+        </>
+      ) : (
+        <>
+          <p className="eyebrow">Live work</p>
+          <p className="mt-1.5 text-[11.5px] leading-4 text-mist-500">
+            Reported by Claude Code hooks. The task is done when its agent
+            reports back or the session stops; there is no scripted workflow.
+          </p>
+        </>
+      )}
 
-      {task.iteration > 1 && (
+      {simulated && task.iteration > 1 && (
         <p className="mt-2.5 text-[11px] leading-4 text-warn">
           Reworked {task.iteration - 1}× after QA/review feedback.
         </p>
       )}
 
-      <div className="my-3.5 h-px bg-white/[0.06]" />
+      {task.subtasks.length > 0 && (
+        <>
+          <div className="my-3.5 h-px bg-white/[0.06]" />
 
-      <p className="eyebrow">Task cards · {task.subtasks.length}</p>
-      {task.subtasks.length > 0 ? (
-        <ul className="mt-1.5 space-y-1.5">
-          {task.subtasks.map((subtask) => (
-            <li
-              key={subtask.id}
-              className="flex items-start gap-2 text-[11.5px] leading-4"
-            >
-              {subtask.done ? (
-                <CheckCircle2
-                  aria-hidden="true"
-                  size={13}
-                  className="mt-[1px] shrink-0 text-ok"
-                />
-              ) : (
-                <Circle
-                  aria-hidden="true"
-                  size={13}
-                  className="mt-[1px] shrink-0 text-mist-500/50"
-                />
-              )}
-              <span
-                className={
-                  subtask.done ? "text-mist-300" : "text-mist-500"
-                }
+          <p className="eyebrow">Task cards · {task.subtasks.length}</p>
+          <ul className="mt-1.5 space-y-1.5">
+            {task.subtasks.map((subtask) => (
+              <li
+                key={subtask.id}
+                className="flex items-start gap-2 text-[11.5px] leading-4"
               >
-                {subtask.title}
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-1.5 text-[11.5px] text-mist-500">
-          No task cards yet.
-        </p>
+                {subtask.done ? (
+                  <CheckCircle2
+                    aria-hidden="true"
+                    size={13}
+                    className="mt-[1px] shrink-0 text-ok"
+                  />
+                ) : (
+                  <Circle
+                    aria-hidden="true"
+                    size={13}
+                    className="mt-[1px] shrink-0 text-mist-500/50"
+                  />
+                )}
+                <span
+                  className={
+                    subtask.done ? "text-mist-300" : "text-mist-500"
+                  }
+                >
+                  {subtask.title}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
-      <div className="my-3.5 h-px bg-white/[0.06]" />
+      {task.findings.length > 0 && (
+        <>
+          <div className="my-3.5 h-px bg-white/[0.06]" />
 
-      <p className="eyebrow">Research findings</p>
-      {task.findings.length > 0 ? (
-        <ul className="mt-1.5 space-y-1.5">
-          {task.findings.map((finding) => (
-            <li
-              key={finding}
-              className="flex items-start gap-2 text-[11.5px] leading-[1.45] text-mist-300"
-            >
-              <Lightbulb
-                aria-hidden="true"
-                size={13}
-                className="mt-[1px] shrink-0 text-mist-500"
-              />
-              <span>{finding}</span>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mt-1.5 text-[11.5px] text-mist-500">
-          No findings published yet.
-        </p>
+          <p className="eyebrow">
+            {simulated ? "Research findings" : "Reported back"}
+          </p>
+          <ul className="mt-1.5 space-y-1.5">
+            {task.findings.map((finding) => (
+              <li
+                key={finding}
+                className="flex items-start gap-2 text-[11.5px] leading-[1.45] text-mist-300"
+              >
+                <Lightbulb
+                  aria-hidden="true"
+                  size={13}
+                  className="mt-[1px] shrink-0 text-mist-500"
+                />
+                <span>{finding}</span>
+              </li>
+            ))}
+          </ul>
+        </>
       )}
 
       <div className="my-3.5 h-px bg-white/[0.06]" />

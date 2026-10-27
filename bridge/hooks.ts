@@ -41,6 +41,8 @@ export interface HookPayload {
   toolName: string | null;
   toolInput: Record<string, unknown> | null;
   lastAssistantMessage: string | null;
+  /** The user prompt on UserPromptSubmit, bounded and never logged. */
+  prompt: string | null;
 }
 
 export type HookParseResult =
@@ -56,6 +58,21 @@ function isBoundedText(value: unknown, max: number): value is string {
   if (typeof value !== "string") return false;
   if (value.length === 0 || value.length > max) return false;
   return !/[\u0000-\u001f\u007f]/.test(value);
+}
+
+/**
+ * A prompt may span lines, so only the control characters that break logs or
+ * terminals are rejected. Length is clamped, not rejected: a pasted prompt
+ * should still become a task.
+ */
+const MAX_PROMPT_LENGTH = 20_000;
+
+function readPrompt(value: unknown): string | null {
+  if (typeof value !== "string" || value.length === 0) return null;
+  if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) return null;
+  return value.length > MAX_PROMPT_LENGTH
+    ? value.slice(0, MAX_PROMPT_LENGTH)
+    : value;
 }
 
 function invalid(reason: string): HookParseResult {
@@ -135,6 +152,8 @@ export function parseHookPayload(body: unknown): HookParseResult {
     lastAssistantMessage = rawSummary;
   }
 
+  const prompt = readPrompt(body.prompt);
+
   if (eventName === "SubagentStart" || eventName === "SubagentStop") {
     if (agentId === null) return invalid(`${eventName} needs an agent_id`);
   }
@@ -155,6 +174,7 @@ export function parseHookPayload(body: unknown): HookParseResult {
       toolName,
       toolInput,
       lastAssistantMessage,
+      prompt,
     },
   };
 }

@@ -44,9 +44,8 @@ export function OverviewPanel() {
                 Live Claude Code session
               </h3>
               <p className="mt-1.5 text-[12px] leading-5 text-mist-300">
-                Agents appear when Claude Code starts subagents. This view
-                follows the session; it does not create tasks or drive the
-                conversation.
+                Agents and tasks appear as Claude Code works. This view
+                follows the session; it never drives the conversation.
               </p>
               <p className="mt-2.5 text-[10.5px] leading-4 text-mist-500">
                 Live backend - agents shown here come from Claude Code hooks on
@@ -158,7 +157,7 @@ export function OverviewPanel() {
         ) : (
           <p className="mt-2 text-[11.5px] leading-5 text-mist-500">
             {bridgeMode
-              ? "No live tasks. Task creation is not part of bridge mode."
+              ? "No live work yet. Prompt the session or let it start a subagent."
               : "Nothing in flight. Run the demo or load the sprint to watch the office wake up."}
           </p>
         )}

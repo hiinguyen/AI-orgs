@@ -101,8 +101,14 @@ export const CORE_AGENT_BY_ID: ReadonlyMap<AgentId, AgentProfile> = new Map(
 /** Backwards-compatible name for the six core profiles. */
 export const AGENTS = CORE_AGENTS;
 
-/** Live profiles from the last accepted snapshot, keyed by id. */
+/**
+ * Every live profile ever announced, keyed by id. Entries are kept after an
+ * agent leaves the current snapshot (finishes or despawns) so historical
+ * events referencing it still resolve a real name instead of a raw-id
+ * fallback. Bounded like `fallbackProfiles` below.
+ */
 const announcedProfiles = new Map<AgentId, AgentProfile>();
+const MAX_ANNOUNCED_PROFILES = 256;
 const fallbackProfiles = new Map<AgentId, AgentProfile>();
 let announcedSignature = "";
 
@@ -132,8 +138,10 @@ function fallbackAgentProfile(id: AgentId): AgentProfile {
 }
 
 /**
- * Replace the announced live profiles. Core profiles are never overridden by
- * a backend. Returns true when the set actually changed.
+ * Merge in the snapshot's live profiles. Core profiles are never overridden
+ * by a backend, and a profile already announced for an id that has since
+ * left the snapshot is kept, not dropped. Returns true when the set actually
+ * changed.
  */
 export function setAnnouncedProfiles(
   profiles: readonly AgentProfile[],
@@ -151,8 +159,15 @@ export function setAnnouncedProfiles(
   if (signature === announcedSignature) return false;
 
   announcedSignature = signature;
-  announcedProfiles.clear();
-  for (const profile of live) announcedProfiles.set(profile.id, profile);
+  for (const profile of live) {
+    // Re-insert to refresh recency for the bounded eviction below.
+    announcedProfiles.delete(profile.id);
+    announcedProfiles.set(profile.id, profile);
+    if (announcedProfiles.size > MAX_ANNOUNCED_PROFILES) {
+      const oldest = announcedProfiles.keys().next().value;
+      if (oldest !== undefined) announcedProfiles.delete(oldest);
+    }
+  }
   return true;
 }
 

@@ -122,12 +122,22 @@ function runSessionSuite(reporter: TestReporter): void {
   applyHook(
     stage,
     state,
-    hook({ hook_event_name: "UserPromptSubmit" }),
+    hook({ hook_event_name: "UserPromptSubmit", prompt: "Fix the login bug" }),
     1000,
   );
+  const promptEvents = stage.drainEvents();
+  const promptTask = stage.snapshot().tasks[0];
   check(
-    "UserPromptSubmit is ignored without an event",
-    afterPrompt.length === 0 && eventTypes(stage).length === 0,
+    "UserPromptSubmit opens a live task for the prompt",
+    afterPrompt.length === 0 &&
+      promptTask !== undefined &&
+      promptTask.assignedAgentId === "session-1" &&
+      promptTask.title === "Fix the login bug" &&
+      promptTask.phase === "intake" &&
+      promptTask.status === "assigned" &&
+      promptEvents.some(
+        (event) => event.type === "task.created" && event.taskId === promptTask.id,
+      ),
   );
 
   applyHook(
@@ -238,6 +248,17 @@ function runSubagentToolSuite(reporter: TestReporter): void {
     }),
     1000,
   );
+  const assignEvents = stage.drainEvents();
+  check(
+    "SubagentStart emits a task.assigned event targeting the new subagent",
+    assignEvents.some(
+      (event) =>
+        event.type === "task.assigned" &&
+        event.targetAgentId === "agent-tool" &&
+        event.agentId === "session-1" &&
+        event.feed,
+    ),
+  );
   applyHook(
     stage,
     state,
@@ -347,6 +368,16 @@ function runStopSuite(reporter: TestReporter): void {
         event.type === "agent.despawned" &&
         event.metadata?.outcome === "success" &&
         typeof event.metadata.duration === "number",
+    ),
+  );
+  check(
+    "SubagentStop emits an agent.message event reporting back to the owner",
+    stopEvents.some(
+      (event) =>
+        event.type === "agent.message" &&
+        event.agentId === "agent-stop" &&
+        event.targetAgentId === "session-1" &&
+        event.feed,
     ),
   );
 
@@ -1585,6 +1616,187 @@ function runCoreFlashSuite(reporter: TestReporter): void {
   );
 }
 
+function runLiveTaskSuite(reporter: TestReporter): void {
+  const { check, group } = reporter;
+  group("53. Live tasks");
+
+  const prompt = setupStage();
+  applyHook(
+    prompt.stage,
+    prompt.state,
+    hook({
+      hook_event_name: "UserPromptSubmit",
+      prompt: "Ship the release\nwith token sk-abc12345",
+    }),
+    1000,
+  );
+  const promptTask = prompt.stage.snapshot().tasks[0];
+  check(
+    "a prompt opens a redacted live task owned by the session robot",
+    promptTask !== undefined &&
+      promptTask.title.includes("Ship the release") &&
+      !promptTask.title.includes("sk-abc12345") &&
+      promptTask.assignedAgentId === "session-1" &&
+      promptTask.phase === "intake" &&
+      promptTask.status === "assigned" &&
+      prompt.stage.getAgent("session-1")?.state.currentTaskId === promptTask.id,
+  );
+
+  applyHook(
+    prompt.stage,
+    prompt.state,
+    hook({
+      hook_event_name: "PreToolUse",
+      tool_name: "Read",
+      tool_input: { file_path: "/repo/src/auth.ts" },
+    }),
+    1000,
+  );
+  check(
+    "a main-conversation tool call reuses the open prompt task",
+    prompt.stage.snapshot().tasks.length === 1,
+  );
+  applyHook(
+    prompt.stage,
+    prompt.state,
+    hook({ hook_event_name: "Stop" }),
+    1000,
+  );
+  const stopped = prompt.stage.snapshot().tasks[0];
+  check(
+    "Stop completes the prompt task",
+    stopped?.phase === "done" &&
+      stopped.status === "completed" &&
+      stopped.progress === 1 &&
+      stopped.completedAt !== null &&
+      stopped.history.at(-1)?.signal === "submitted",
+  );
+
+  const sub = setupStage();
+  applyHook(sub.stage, sub.state, hook({ hook_event_name: "SessionStart" }), 1000);
+  applyHook(
+    sub.stage,
+    sub.state,
+    hook({
+      hook_event_name: "PreToolUse",
+      tool_name: "Agent",
+      tool_input: {
+        description: "Review the auth change",
+        subagent_type: "code-reviewer",
+      },
+    }),
+    1000,
+  );
+  applyHook(
+    sub.stage,
+    sub.state,
+    hook({
+      hook_event_name: "SubagentStart",
+      agent_id: "task-agent",
+      agent_type: "code-reviewer",
+    }),
+    1000,
+  );
+  const subTask = sub.stage
+    .snapshot()
+    .tasks.find((task) => task.assignedAgentId === "task-agent");
+  check(
+    "a subagent opens a task titled from its delegation and phased by role",
+    subTask !== undefined &&
+      subTask.title === "Review the auth change" &&
+      subTask.phase === "review" &&
+      subTask.status === "review" &&
+      sub.stage.getAgent("task-agent")?.state.currentTaskId === subTask.id,
+  );
+
+  advanceStage(sub.stage, 2);
+  const beforeTool = sub.stage.getTask(subTask?.id ?? "")?.updatedAt ?? 0;
+  applyHook(
+    sub.stage,
+    sub.state,
+    hook({
+      hook_event_name: "PreToolUse",
+      agent_id: "task-agent",
+      agent_type: "code-reviewer",
+      tool_name: "Grep",
+      tool_input: { pattern: "refresh" },
+    }),
+    1000,
+  );
+  const afterTool = sub.stage.getTask(subTask?.id ?? "")?.updatedAt ?? 0;
+  check(
+    "a subagent tool call refreshes its task timestamp",
+    subTask !== undefined && afterTool > beforeTool,
+  );
+
+  applyHook(
+    sub.stage,
+    sub.state,
+    hook({
+      hook_event_name: "SubagentStop",
+      agent_id: "task-agent",
+      agent_type: "code-reviewer",
+      last_assistant_message: "Looks good",
+    }),
+    1000,
+  );
+  const done = sub.stage
+    .snapshot()
+    .tasks.find((task) => task.id === subTask?.id);
+  check(
+    "a subagent stop completes its task and clears the owner",
+    done?.phase === "done" &&
+      done.status === "completed" &&
+      done.progress === 1 &&
+      sub.stage.getAgent("task-agent")?.state.currentTaskId === null,
+  );
+
+  const lost = setupStage();
+  applyHook(
+    lost.stage,
+    lost.state,
+    hook({
+      hook_event_name: "SubagentStart",
+      agent_id: "lost-agent",
+      agent_type: "code-reviewer",
+    }),
+    1000,
+  );
+  reapOrphans(lost.stage, lost.state, ORPHAN_TIMEOUT_MS + 1000);
+  const failed = lost.stage
+    .snapshot()
+    .tasks.find((task) => task.assignedAgentId === "lost-agent");
+  check(
+    "a reaped subagent fails its task",
+    failed?.phase === "failed" &&
+      failed.status === "failed" &&
+      failed.completedAt === null &&
+      failed.history.at(-1)?.signal === "abort",
+  );
+
+  const end = setupStage();
+  applyHook(
+    end.stage,
+    end.state,
+    hook({
+      hook_event_name: "SubagentStart",
+      agent_id: "end-agent",
+      agent_type: "tdd-guide",
+    }),
+    1000,
+  );
+  applyHook(
+    end.stage,
+    end.state,
+    hook({ hook_event_name: "SessionEnd" }),
+    1000,
+  );
+  check(
+    "SessionEnd completes the tasks of the session and its subagents",
+    end.stage.snapshot().tasks.every((task) => task.phase === "done"),
+  );
+}
+
 export function runBridgeMappingSuites(reporter: TestReporter): void {
   runRoleSuite(reporter);
   runSessionSuite(reporter);
@@ -1603,4 +1815,5 @@ export function runBridgeMappingSuites(reporter: TestReporter): void {
   runCoreMirrorSuite(reporter);
   runBoardWalkSuite(reporter);
   runCoreFlashSuite(reporter);
+  runLiveTaskSuite(reporter);
 }

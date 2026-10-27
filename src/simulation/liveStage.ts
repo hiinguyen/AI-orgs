@@ -17,6 +17,12 @@ import type {
   SimulationStatus,
   WorldSnapshot,
 } from "../integrations/AgentBackend.ts";
+import type {
+  Task,
+  TaskPriority,
+  WorkflowPhase,
+} from "../tasks/taskTypes.ts";
+import { PHASE_STATUS, isTerminalPhase } from "../tasks/taskTypes.ts";
 import {
   WAITING_LOCATION,
   allocateBay,
@@ -94,6 +100,22 @@ export interface FinishOptions {
   activity?: string;
 }
 
+/** What the driver tells the stage about a unit of live work. */
+export interface StartLiveTaskOptions {
+  title: string;
+  description?: string;
+  /** The phase the work belongs to; the owner's role usually decides it. */
+  phase: WorkflowPhase;
+  owner: AgentId | null;
+  priority?: TaskPriority;
+}
+
+/** Completed live tasks are kept for the panel history, newest last. */
+export const MAX_LIVE_TASKS = 60;
+
+/** Profiles kept for finished agents whose tasks are still listed. */
+const MAX_LIVE_PROFILES = 256;
+
 const DEFAULTS = {
   walkSpeed: 2.4,
   spawnHoldSeconds: 0.4,
@@ -108,6 +130,11 @@ function truncatedActivity(value: string): string {
   return value.length > MAX_ACTIVITY_LENGTH
     ? value.slice(0, MAX_ACTIVITY_LENGTH)
     : value;
+}
+
+/** Same millisecond rounding as the snapshot clock, so times line up. */
+function roundClock(value: number): number {
+  return Math.round(value * 1000) / 1000;
 }
 
 function coreState(profile: AgentProfile): AgentState {
@@ -188,6 +215,7 @@ export function advance(
 export interface AgentEventExtra {
   agentId?: AgentId;
   targetAgentId?: AgentId;
+  taskId?: string;
   severity?: EventSeverity;
   feed?: boolean;
   metadata?: Record<string, unknown>;
@@ -213,7 +241,15 @@ export class LiveStage {
 
   private readonly agents: LiveAgent[] = [];
   private readonly links: CommLink[] = [];
+  private readonly tasks: Task[] = [];
   private readonly pendingEvents: AgentEvent[] = [];
+  /**
+   * Every profile this stage has spawned. A finished agent leaves the roster
+   * but its task keeps referring to it, so the snapshot includes the profile
+   * for as long as a task does.
+   */
+  private readonly profilesById = new Map<AgentId, AgentProfile>();
+  private taskSeq = 0;
   private readonly coreOverrides = new Map<
     AgentId,
     { status: AgentStatus; activity: string }
@@ -293,6 +329,7 @@ export class LiveStage {
       ...(extra.targetAgentId === undefined
         ? {}
         : { targetAgentId: extra.targetAgentId }),
+      ...(extra.taskId === undefined ? {} : { taskId: extra.taskId }),
       ...(extra.metadata === undefined ? {} : { metadata: extra.metadata }),
     });
   }
@@ -344,6 +381,7 @@ export class LiveStage {
       holdActivity: null,
     };
     this.agents.push(agent);
+    this.rememberProfile(profile);
 
     const bay = allocateBay(this.occupiedBays());
     if (bay === null) {
@@ -544,11 +582,133 @@ export class LiveStage {
     return true;
   }
 
+  /**
+   * Start the task an agent is working on. The stage owns the record so the
+   * side panel, the mission wall and every other snapshot reader see one list.
+   */
+  startTask(options: StartLiveTaskOptions): Task {
+    this.taskSeq += 1;
+    const at = roundClock(this.clockSeconds);
+    const task: Task = {
+      id: `L-${this.taskSeq}`,
+      title: options.title,
+      description: options.description ?? "",
+      priority: options.priority ?? "medium",
+      status: PHASE_STATUS[options.phase],
+      phase: options.phase,
+      assignedAgentId: options.owner,
+      progress: 0,
+      createdAt: at,
+      updatedAt: at,
+      completedAt: null,
+      iteration: 0,
+      subtasks: [],
+      findings: [],
+      history: [
+        { from: "queued", to: options.phase, signal: "picked_up", at },
+      ],
+      isDemo: false,
+      preferredAgentId: null,
+      blockedReason: null,
+    };
+    this.tasks.push(task);
+    this.trimTasks();
+    this.setCurrentTask(options.owner, task.id);
+    return task;
+  }
+
+  /** A task by id, live reference, or null when it was trimmed or unknown. */
+  getTask(id: string): Task | null {
+    return this.tasks.find((task) => task.id === id) ?? null;
+  }
+
+  /** Mark a running task as freshly updated; terminal tasks do not move. */
+  touchTask(id: string): void {
+    const task = this.getTask(id);
+    if (task === null || isTerminalPhase(task.phase)) return;
+    task.updatedAt = roundClock(this.clockSeconds);
+  }
+
+  /**
+   * Finish a running task. A success is done and fully progressed; a failure
+   * keeps the progress it had and ends in the failed phase.
+   */
+  finishTask(id: string, outcome: "success" | "error"): boolean {
+    const task = this.getTask(id);
+    if (task === null || isTerminalPhase(task.phase)) return false;
+    const at = roundClock(this.clockSeconds);
+    const to: WorkflowPhase = outcome === "success" ? "done" : "failed";
+    task.history.push({
+      from: task.phase,
+      to,
+      signal: outcome === "success" ? "submitted" : "abort",
+      at,
+    });
+    task.phase = to;
+    task.status = PHASE_STATUS[to];
+    task.updatedAt = at;
+    if (outcome === "success") {
+      task.completedAt = at;
+      task.progress = 1;
+    }
+    this.clearCurrentTask(task.assignedAgentId, task.id);
+    return true;
+  }
+
+  private setCurrentTask(owner: AgentId | null, taskId: string): void {
+    if (owner === null) return;
+    const agent = this.getAgent(owner);
+    if (agent === null) return;
+    agent.state.currentTaskId = taskId;
+  }
+
+  private clearCurrentTask(owner: AgentId | null, taskId: string): void {
+    if (owner === null) return;
+    const agent = this.getAgent(owner);
+    if (agent === null || agent.state.currentTaskId !== taskId) return;
+    agent.state.currentTaskId = null;
+  }
+
+  /** Keep the newest tasks, dropping the oldest finished ones first. */
+  private trimTasks(): void {
+    while (this.tasks.length > MAX_LIVE_TASKS) {
+      const finished = this.tasks.findIndex((task) =>
+        isTerminalPhase(task.phase),
+      );
+      this.tasks.splice(finished >= 0 ? finished : 0, 1);
+    }
+  }
+
+  /** Bound the profile archive, never dropping a live or task-referenced one. */
+  private rememberProfile(profile: AgentProfile): void {
+    if (
+      !this.profilesById.has(profile.id) &&
+      this.profilesById.size >= MAX_LIVE_PROFILES
+    ) {
+      const referenced = new Set<AgentId>();
+      for (const agent of this.agents) referenced.add(agent.id);
+      for (const task of this.tasks) {
+        if (task.assignedAgentId !== null) {
+          referenced.add(task.assignedAgentId);
+        }
+      }
+      for (const id of this.profilesById.keys()) {
+        if (!referenced.has(id)) {
+          this.profilesById.delete(id);
+          break;
+        }
+      }
+    }
+    this.profilesById.set(profile.id, profile);
+  }
+
   /** Clear the stage and every queued event, back to a ready world. */
   reset(): void {
     this.agents.length = 0;
     this.links.length = 0;
+    this.tasks.length = 0;
     this.pendingEvents.length = 0;
+    this.profilesById.clear();
     this.coreOverrides.clear();
     this.coreFlashes.clear();
     this.coreMotion.clear();
@@ -557,6 +717,7 @@ export class LiveStage {
     this.globalPaused = false;
     this.eventSeq = 0;
     this.linkSeq = 0;
+    this.taskSeq = 0;
     this.baysDirty = false;
     this.droppedSpawns = 0;
   }
@@ -649,14 +810,25 @@ export class LiveStage {
       };
     });
 
+    const profiles: AgentProfile[] = [
+      ...CORE_AGENTS.map((profile) => ({ ...profile })),
+      ...this.agents.map((agent) => ({ ...agent.profile })),
+    ];
+    const announced = new Set(profiles.map((profile) => profile.id));
+    for (const task of this.tasks) {
+      const owner = task.assignedAgentId;
+      if (owner === null || announced.has(owner)) continue;
+      const profile = this.profilesById.get(owner);
+      if (profile === undefined) continue;
+      announced.add(owner);
+      profiles.push({ ...profile });
+    }
+
     return {
       clock: Math.round(this.clockSeconds * 1000) / 1000,
       status: this.status,
       speed: this.speed,
-      profiles: [
-        ...CORE_AGENTS.map((profile) => ({ ...profile })),
-        ...this.agents.map((agent) => ({ ...agent.profile })),
-      ],
+      profiles,
       agents: [
         ...coreStates,
         ...this.agents.map((agent) => ({
@@ -666,7 +838,12 @@ export class LiveStage {
           paused: agent.state.paused || this.globalPaused,
         })),
       ],
-      tasks: [],
+      tasks: this.tasks.map((task) => ({
+        ...task,
+        subtasks: task.subtasks.map((subtask) => ({ ...subtask })),
+        findings: [...task.findings],
+        history: task.history.map((entry) => ({ ...entry })),
+      })),
       links: this.links
         .filter((link) => link.endsAt > this.clockSeconds)
         .map((link) => ({ ...link })),

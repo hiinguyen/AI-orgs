@@ -100,7 +100,9 @@ export function TasksPanel() {
         <div className="surface-quiet mt-3 px-3 py-4 text-center">
           <p className="text-[12px] leading-5 text-mist-500">
             {bridgeMode
-              ? "Tasks are not part of bridge mode. This view follows the Claude Code session; agents and activity are in Overview and Agents."
+              ? tasks.length === 0
+                ? "No live work yet. Tasks appear when a Claude Code session receives a prompt or starts a subagent."
+                : "No live tasks match this filter."
               : tasks.length === 0
                 ? "No tasks yet. Run the demo or add one to watch the workflow move."
                 : "No tasks match this filter."}
