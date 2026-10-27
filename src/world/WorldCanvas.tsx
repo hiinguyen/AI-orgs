@@ -256,15 +256,29 @@ function RenderStatsProbe() {
 /**
  * The single Canvas. Quality changes update the `shadows` and `dpr` props in
  * place; the Canvas is never keyed or remounted (see spec pitfall 2).
+ *
+ * The 2D map is a second renderer, not a replacement: switching to 2D only
+ * stops the frame loop once the loading screen has seen its first frames, so
+ * the WebGL context and every baked resource survive the round trip.
  */
 export function WorldCanvas() {
   const quality = useWorldStore((state) => state.quality);
   const high = quality === "high";
   const setQuality = useWorldStore((state) => state.setQuality);
+  const viewMode = useWorldStore((state) => state.viewMode);
+  const sceneReady = useWorldStore((state) => state.sceneReady);
+  // frameloop stays "always" until ReadySignal has counted three frames;
+  // dropping to "never" earlier would leave the loading screen on screen.
+  const resting = sceneReady && viewMode === "2d";
 
   return (
-    <div className="absolute inset-0">
+    <div
+      className="absolute inset-0"
+      style={resting ? { visibility: "hidden" } : undefined}
+      data-view={viewMode}
+    >
       <Canvas
+        frameloop={resting ? "never" : "always"}
         shadows={high ? "percentage" : false}
         dpr={high ? [1, 1.75] : [1, 1.2]}
         camera={{

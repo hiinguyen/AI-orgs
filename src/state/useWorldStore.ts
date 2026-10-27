@@ -17,6 +17,12 @@ import { DEFAULT_SOUND_SETTINGS } from "../audio/soundCues.ts";
 import type { SoundSettings } from "../audio/soundCues.ts";
 import { MIRROR_INTERVAL_MS, ThrottledMirror } from "./mirrorThrottle.ts";
 import type { QualityMode } from "./qualityPolicy.ts";
+import {
+  browserViewStorage,
+  DEFAULT_VIEW_MODE,
+  writeStoredViewMode,
+  type ViewMode,
+} from "./viewMode.ts";
 
 export type { QualityMode } from "./qualityPolicy.ts";
 export type { SoundSettings } from "../audio/soundCues.ts";
@@ -141,6 +147,8 @@ export interface WorldStore {
   preferredAgentId: AgentId | null;
 
   overlays: OverlaySettings;
+  /** Which world renderer is visible. Both stay mounted (see WorldCanvas). */
+  viewMode: ViewMode;
   quality: QualityMode;
   qualityAuto: boolean;
   /** True once high quality has been active; the baked environment stays pooled. */
@@ -164,6 +172,12 @@ export interface WorldStore {
   closeTaskDialog: () => void;
 
   setOverlays: (patch: Partial<OverlaySettings>) => void;
+  /**
+   * Switch the world renderer. A user toggle persists; the boot value read
+   * from `?view=` passes `persist: false` so a session override does not
+   * replace the saved preference.
+   */
+  setViewMode: (mode: ViewMode, persist?: boolean) => void;
   setQuality: (quality: QualityMode, auto: boolean) => void;
   setSceneReady: (ready: boolean) => void;
   setViewInsets: (insets: ViewInsets) => void;
@@ -235,6 +249,7 @@ export const useWorldStore = create<WorldStore>()((set) => {
     preferredAgentId: null,
 
     overlays: { walkingPaths: true, speechIndicators: true },
+    viewMode: DEFAULT_VIEW_MODE,
     // Low is the safe default until AppShell applies the device policy: the
     // first Canvas commit must not build high-only resources on a phone, a
     // reduced-motion session or a small CPU.
@@ -324,6 +339,11 @@ export const useWorldStore = create<WorldStore>()((set) => {
 
     setOverlays: (patch) =>
       set((state) => ({ overlays: { ...state.overlays, ...patch } })),
+
+    setViewMode: (mode, persist = true) => {
+      set({ viewMode: mode });
+      if (persist) writeStoredViewMode(mode, browserViewStorage());
+    },
 
     setQuality: (quality, auto) =>
       set((state) => ({

@@ -4,7 +4,14 @@ import { useEffect, useState } from "react";
 import { Maximize2, Minimize2 } from "lucide-react";
 import { useWorldStore } from "@/state/useWorldStore";
 import type { CameraPresetId } from "@/state/useWorldStore";
-import { cn } from "@/components/ui";
+import type { ViewMode } from "@/state/viewMode";
+import { SegmentedControl, cn } from "@/components/ui";
+
+const VIEW_OPTIONS: readonly { value: ViewMode; label: string; title: string }[] =
+  [
+    { value: "3d", label: "3D", title: "3D office view" },
+    { value: "2d", label: "2D", title: "2D floor plan" },
+  ];
 
 const PRESETS: readonly {
   id: CameraPresetId;
@@ -21,6 +28,8 @@ const PRESETS: readonly {
 export function CameraBar({ className }: { className?: string }) {
   const camera = useWorldStore((state) => state.camera);
   const requestCamera = useWorldStore((state) => state.requestCamera);
+  const viewMode = useWorldStore((state) => state.viewMode);
+  const setViewMode = useWorldStore((state) => state.setViewMode);
   const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {
@@ -44,12 +53,23 @@ export function CameraBar({ className }: { className?: string }) {
 
   return (
     <nav
-      aria-label="Camera presets"
+      aria-label="World view and camera presets"
       className={cn(
         "surface scroll-thin flex max-w-full items-center gap-0.5 overflow-x-auto rounded-full p-1",
         className,
       )}
     >
+      <SegmentedControl
+        options={VIEW_OPTIONS}
+        value={viewMode}
+        onChange={setViewMode}
+        ariaLabel="World view"
+        className="shrink-0 border-white/[0.09] bg-ink-950/70"
+      />
+      <span
+        aria-hidden="true"
+        className="mx-0.5 h-4 w-px shrink-0 bg-white/[0.1]"
+      />
       {PRESETS.map((preset) => {
         const active = camera.preset === preset.id;
         return (

@@ -16,6 +16,7 @@ import {
   initReducedMotion,
   reducedMotion,
 } from "@/state/reducedMotion";
+import { browserViewStorage, readStoredViewMode } from "@/state/viewMode";
 import { CameraBar } from "@/components/controls/CameraBar";
 import { NavRail } from "./NavRail";
 import { TopBar } from "./TopBar";
@@ -27,6 +28,11 @@ import { useSoundEffects } from "@/audio/useSoundEffects";
 
 const WorldCanvas = dynamic(
   () => import("@/world/WorldCanvas").then((module) => module.WorldCanvas),
+  { ssr: false },
+);
+
+const FloorPlan2D = dynamic(
+  () => import("@/world/FloorPlan2D").then((module) => module.FloorPlan2D),
   { ssr: false },
 );
 
@@ -97,6 +103,7 @@ function pickInitialQualityFromBrowser(): {
 export function AppShell() {
   useSoundEffects();
   const sceneReady = useWorldStore((state) => state.sceneReady);
+  const viewMode = useWorldStore((state) => state.viewMode);
   const backendConnected = useWorldStore((state) => state.backend.connected);
   const panelProbe = usePanelRenderProbe();
   const navRef = useRef<HTMLElement | null>(null);
@@ -107,6 +114,14 @@ export function AppShell() {
     // The live reduced-motion flag must exist before the first quality pick:
     // it is one of the inputs to the low path decision.
     const stopReducedMotion = initReducedMotion();
+    // `?view=` overrides the stored choice for this session only, so the
+    // boot value must not be written back to storage.
+    useWorldStore
+      .getState()
+      .setViewMode(
+        readStoredViewMode(window.location.search, browserViewStorage()),
+        false,
+      );
     const initial = pickInitialQualityFromBrowser();
     useWorldStore.getState().setQuality(initial.quality, initial.auto);
     const stopBackend = connectBackend();
@@ -243,7 +258,10 @@ export function AppShell() {
   return (
     <main className="relative h-dvh w-full overflow-hidden bg-ink-950">
       <WorldCanvas />
-      <AgentLabelsOverlay />
+      <FloorPlan2D />
+      {/* The bubble anchors are projected by the 3D frame loop, which stops
+          while the map is visible, so the DOM overlay only exists in 3D. */}
+      {viewMode === "3d" ? <AgentLabelsOverlay /> : null}
 
       <div className="app-safe pointer-events-none absolute inset-0 flex flex-col gap-2 md:flex-row md:gap-3">
         <NavRail
