@@ -1,7 +1,7 @@
 /**
  * Pure mapping from a validated Claude Code hook to the shared live stage.
  * No I/O, no logging and no raw payload values beyond the short, redacted
- * activity text that the UI is meant to show.
+ * activity text and task titles that the UI is meant to show.
  */
 import { CORE_AGENT_IDS } from "../src/agents/agentTypes.ts";
 import type { AgentId, AgentProfile, AgentRole, AgentStatus } from "../src/agents/agentTypes.ts";
@@ -10,6 +10,7 @@ import { CORE_AGENTS } from "../src/agents/AgentRegistry.ts";
 import { LiveStage } from "../src/simulation/liveStage.ts";
 import type { HookPayload } from "./hooks.ts";
 import { redact, summaryFromMessage, toolTarget, truncate } from "./redact.ts";
+import type { WorkflowPhase } from "../src/tasks/taskTypes.ts";
 
 const ORION: AgentId = "orion";
 
@@ -58,6 +59,10 @@ export interface BridgeMappingState {
   agentRole: Map<string, AgentRole>;
   /** Core id to the live agent ids currently mirrored onto it. */
   coreOwners: Map<AgentId, Set<string>>;
+  /** Live agent to the task it is working on. */
+  agentTasks: Map<string, string>;
+  /** Session to the task opened by its current prompt. */
+  sessionTasks: Map<string, string>;
 }
 
 export function createMappingState(): BridgeMappingState {
@@ -70,6 +75,8 @@ export function createMappingState(): BridgeMappingState {
     agentSession: new Map<string, string>(),
     agentRole: new Map<string, AgentRole>(),
     coreOwners: new Map<AgentId, Set<string>>(),
+    agentTasks: new Map<string, string>(),
+    sessionTasks: new Map<string, string>(),
   };
 }
 
@@ -82,6 +89,8 @@ export function resetMappingState(state: BridgeMappingState): void {
   state.agentSession.clear();
   state.agentRole.clear();
   state.coreOwners.clear();
+  state.agentTasks.clear();
+  state.sessionTasks.clear();
 }
 
 const ROLE_LABELS: Record<AgentRole, string> = {
@@ -92,6 +101,19 @@ const ROLE_LABELS: Record<AgentRole, string> = {
   qa: "QA Engineer",
   reviewer: "Code Reviewer",
 };
+
+/** The workflow phase a role's live work belongs to. */
+const PHASE_FOR_ROLE: Record<AgentRole, WorkflowPhase> = {
+  orchestrator: "intake",
+  researcher: "research",
+  product_manager: "planning",
+  engineer: "implementation",
+  qa: "testing",
+  reviewer: "review",
+};
+
+/** Longest prompt-derived task title; the redacted prompt is cut to this. */
+const MAX_LIVE_TASK_TITLE = 80;
 
 /**
  * Role from a Claude Code subagent type, case insensitive, first match wins.
@@ -207,6 +229,110 @@ function folderLabel(cwd: string): string {
   const last = parts[parts.length - 1] ?? "";
   const masked = truncate(redact(last), MAX_SESSION_LABEL_LENGTH);
   return masked.length > 0 ? masked : "session";
+}
+
+/** Title for a prompt task: the redacted prompt, cut to one short line. */
+function promptTitle(prompt: string | null): string | null {
+  if (prompt === null) return null;
+  const masked = truncate(redact(prompt), MAX_LIVE_TASK_TITLE);
+  return masked.length > 0 ? masked : null;
+}
+
+/**
+ * Open the task for a new prompt. A prompt is one turn of session work, so a
+ * previous task that never saw Stop is closed first instead of left running.
+ */
+function startSessionTask(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  payload: HookPayload,
+  actor: AgentId,
+): void {
+  const previous = state.sessionTasks.get(payload.sessionId);
+  if (previous !== undefined) {
+    stage.finishTask(previous, "success");
+    state.sessionTasks.delete(payload.sessionId);
+  }
+  const title =
+    promptTitle(payload.prompt) ?? "Claude Code session work";
+  const task = stage.startTask({
+    title,
+    description: `Live Claude Code session in ${folderLabel(payload.cwd)}`,
+    phase: "intake",
+    owner: actor,
+  });
+  state.sessionTasks.set(payload.sessionId, task.id);
+  stage.emit("task.created", `New live task: ${title}`, {
+    taskId: task.id,
+    agentId: actor,
+    severity: "info",
+    feed: true,
+  });
+}
+
+/**
+ * The session task, created on first use when the prompt hook carried no
+ * prompt (or never ran). Never opens a second task for one turn.
+ */
+function ensureSessionTask(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  payload: HookPayload,
+  actor: AgentId,
+): string | null {
+  const existing = state.sessionTasks.get(payload.sessionId);
+  if (existing !== undefined && stage.getTask(existing) !== null) {
+    stage.touchTask(existing);
+    return existing;
+  }
+  startSessionTask(stage, state, payload, actor);
+  return state.sessionTasks.get(payload.sessionId) ?? null;
+}
+
+/** Close the session task and forget its mapping. */
+function finishSessionTask(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  sessionId: string,
+  outcome: "success" | "error",
+): void {
+  const taskId = state.sessionTasks.get(sessionId);
+  if (taskId === undefined) return;
+  stage.finishTask(taskId, outcome);
+  state.sessionTasks.delete(sessionId);
+}
+
+/** Close a subagent's task and forget its mapping. */
+function finishAgentTask(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  agentId: string,
+  outcome: "success" | "error",
+): void {
+  const taskId = state.agentTasks.get(agentId);
+  if (taskId === undefined) return;
+  stage.finishTask(taskId, outcome);
+  state.agentTasks.delete(agentId);
+}
+
+/** Keep the session's task fresh while a main-agent tool call runs. */
+function touchSessionTask(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  sessionId: string,
+): void {
+  const taskId = state.sessionTasks.get(sessionId);
+  if (taskId !== undefined) stage.touchTask(taskId);
+}
+
+/** Keep the owner's task fresh while a tool call starts or ends. */
+function touchAgentTask(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  agentId: string,
+): void {
+  const taskId = state.agentTasks.get(agentId);
+  if (taskId !== undefined) stage.touchTask(taskId);
 }
 
 /**
@@ -430,6 +556,13 @@ export function forgetAgent(
   }
   releaseMirror(stage, state, agentId);
   const sessionId = state.agentSession.get(agentId);
+  const isSessionRobot = sessionId === agentId;
+  // A session robot that leaves quietly still completed its work; any other
+  // agent without an outcome is treated as lost.
+  const outcome: "success" | "error" =
+    finished?.outcome ?? (isSessionRobot ? "success" : "error");
+  finishAgentTask(stage, state, agentId, outcome);
+  if (isSessionRobot) finishSessionTask(stage, state, agentId, outcome);
   state.agentSession.delete(agentId);
   state.lastSeen.delete(agentId);
   if (sessionId === undefined) return;
@@ -466,9 +599,11 @@ function handleSessionEnd(
   payload: HookPayload,
 ): void {
   const hadRobot = isOwnRobot(stage, state, payload.sessionId);
+  finishSessionTask(stage, state, payload.sessionId, "success");
   const agents = state.sessionAgents.get(payload.sessionId);
   if (agents !== undefined) {
     for (const id of agents) {
+      finishAgentTask(stage, state, id, "success");
       stage.finish(id, "success");
       forgetAgent(stage, state, id);
     }
@@ -476,6 +611,17 @@ function handleSessionEnd(
   }
   // Orion is only idle when no live session robot still mirrors onto it.
   if (!hadRobot && !hasMirrorOwners(state, ORION)) setCoreIdle(stage, ORION);
+}
+
+function handlePrompt(
+  stage: LiveStage,
+  state: BridgeMappingState,
+  payload: HookPayload,
+  now: number,
+): void {
+  const actor = sessionActor(stage, state, payload, now);
+  setLiveActivity(stage, state, actor, "Reading a new prompt", "thinking");
+  startSessionTask(stage, state, payload, actor);
 }
 
 function handleMainTool(
@@ -486,6 +632,7 @@ function handleMainTool(
 ): void {
   const target = toolTarget(payload.toolName ?? "tool", payload.toolInput, payload.cwd);
   const actor = sessionActor(stage, state, payload, now);
+  ensureSessionTask(stage, state, payload, actor);
   setLiveActivity(stage, state, actor, `Tool: ${target}`, "working");
   if (!isAgentTool(payload.toolName)) return;
   const subagentType = readString(payload.toolInput, "subagent_type");
@@ -535,6 +682,14 @@ function handleSubagentStart(
   state.lastSeen.set(payload.agentId, now);
 
   const description = takeAgentDescription(state, payload.agentType);
+  const task = stage.startTask({
+    title:
+      description ?? truncate(`${payload.agentType} task`, MAX_LIVE_TASK_TITLE),
+    description: `Live ${ROLE_LABELS[role]} subagent in ${folderLabel(payload.cwd)}`,
+    phase: PHASE_FOR_ROLE[role],
+    owner: payload.agentId,
+  });
+  state.agentTasks.set(payload.agentId, task.id);
   setLiveActivity(
     stage,
     state,
@@ -549,6 +704,7 @@ function handleSubagentStart(
     {
       agentId: parent,
       targetAgentId: payload.agentId,
+      taskId: task.id,
       severity: "info",
       feed: true,
     },
@@ -566,6 +722,7 @@ function handleSubagentStop(
   if (!stage.has(payload.agentId)) return;
 
   const summary = summaryFromMessage(payload.lastAssistantMessage);
+  finishAgentTask(stage, state, payload.agentId, "success");
   const coreId = mirrorTarget(state, payload.agentId);
   const coreName = CORE_AGENTS.find((core) => core.id === coreId)?.name ?? "Agent";
   flashOutcome(
@@ -603,6 +760,7 @@ function handleStop(
   state: BridgeMappingState,
   payload: HookPayload,
 ): void {
+  finishSessionTask(stage, state, payload.sessionId, "success");
   const actor = findSessionActor(stage, state, payload);
   if (actor !== ORION) {
     setLiveActivity(stage, state, actor, "Idle", "idle");
@@ -627,7 +785,7 @@ export function applyHook(
       handleSessionEnd(stage, state, payload);
       return;
     case "UserPromptSubmit":
-      touchSession(stage, state, payload, now);
+      handlePrompt(stage, state, payload, now);
       return;
     case "PreToolUse":
       if (payload.agentId === null) {
@@ -635,6 +793,7 @@ export function applyHook(
       } else if (stage.has(payload.agentId)) {
         touchSession(stage, state, payload, now);
         state.lastSeen.set(payload.agentId, now);
+        touchAgentTask(stage, state, payload.agentId);
         const target = toolTarget(
           payload.toolName ?? "tool",
           payload.toolInput,
@@ -647,7 +806,10 @@ export function applyHook(
       touchSession(stage, state, payload, now);
       if (payload.agentId !== null && stage.has(payload.agentId)) {
         state.lastSeen.set(payload.agentId, now);
+        touchAgentTask(stage, state, payload.agentId);
         setLiveActivity(stage, state, payload.agentId, null, "thinking");
+      } else {
+        touchSessionTask(stage, state, payload.sessionId);
       }
       return;
     case "PostToolUseFailure":
@@ -666,6 +828,7 @@ export function applyHook(
       }
       if (payload.agentId !== null && stage.has(payload.agentId)) {
         state.lastSeen.set(payload.agentId, now);
+        touchAgentTask(stage, state, payload.agentId);
         const tool = truncate(payload.toolName ?? "tool", 40);
         setLiveActivity(stage, state, payload.agentId, `Tool failed: ${tool}`, "working");
         stage.emit("agent.message", `Tool failed: ${tool}`, {
@@ -673,6 +836,8 @@ export function applyHook(
           severity: "warning",
           feed: true,
         });
+      } else {
+        touchSessionTask(stage, state, payload.sessionId);
       }
       return;
     case "SubagentStart":

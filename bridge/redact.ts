@@ -1,8 +1,9 @@
 /**
  * Privacy boundary for Claude Code hook payloads. Hook JSON carries prompts,
- * file contents and shell commands, so the bridge never forwards those values.
- * These pure helpers produce the only text that is allowed into a robot's
- * activity line, with obvious secrets masked before anything leaves the hook.
+ * file contents and shell commands, so the bridge only forwards short,
+ * redacted fragments of those values: an activity line or a task title.
+ * These pure helpers produce that text, with obvious secrets masked before
+ * anything leaves the hook.
  */
 
 const MAX_TOOL_NAME = 40;
