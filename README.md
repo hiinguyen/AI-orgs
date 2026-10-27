@@ -352,3 +352,7 @@ Nine constraints shaped the implementation, learned the hard way:
 - `docs/spec/reference-screenshots/` - screenshots of the original build this one matches (dark glass UI, layout, density).
 
 The demo video at the top (`docs/demo.mp4`) is a real screen capture of the production build running the scripted demo task at 1x speed with sound.
+
+## License
+
+MIT - see [LICENSE](LICENSE).

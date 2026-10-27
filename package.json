@@ -2,6 +2,12 @@
   "name": "ai-agent-world",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
+  "author": "Nguyen Hai (https://github.com/hiinguyen)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hiinguyen/AI-orgs.git"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
