@@ -41,6 +41,7 @@ URL flags:
 
 - `?quality=high` - force the high rendering path (shadows, environment reflections, full skyline, DPR up to 1.75).
 - `?quality=low` - force the performance path (no shadows or environment, ~120 skyline towers, capped DPR).
+- `?view=2d` - boot into the 2D floor plan; `?view=3d` forces the 3D office. The URL override applies to the session only. Without it the app uses the last choice from the camera bar, stored under `aaw.view.v1` (3D unless you pick 2D).
 
 Without a flag the app picks quality up front from the machine (cores, viewport width, reduced-motion preference) and can still drop to low automatically if the frame rate cannot hold (see [Rendering and performance](#rendering-and-performance))).
 
@@ -118,6 +119,8 @@ Each role has a distinct rig: Orion is taller with a crown-like visor, Iris has 
 
 **The agents.** Procedural robots with a blended pose system: idle breathing, walking driven by actual speed, typing, thinking (head tilt, hand to chin), talking gestures, a success bounce and an error slump. Each agent trails a path of small discs flowing along their remaining route, with a breathing ring at the destination. Communication is drawn as a glowing bezier arc between the two agents with instanced packet sprites travelling along it. Speech bubbles are DOM pills that track the 3D position of each agent (see [engineering notes](#engineering-notes-why-the-code-looks-like-this) for why they are not drei `<Html>`).
 
+**The 2D floor plan.** The camera bar starts with a **3D / 2D** toggle. The 2D view is a live top-down plan of the same office drawn on a plain canvas from the same snapshot: desks with owner names, the hub, mission control, both boards, the collaboration table and the twelve dispatch bays. Agents keep their colour discs, initials, damped movement, heading, selection ring and outcome pulses; walking paths, communication arcs with travelling packets, desk glows while an owner works and the hub pulse all mirror the 3D read. Pan with a drag, zoom with the wheel or a pinch, click an agent or a desk to open the same panel, and use the same presets, follow mode and `Esc` behaviour. Both renderers stay mounted, so switching is instant and keeps the scene state.
+
 **The UI.** Everything floats above the canvas: an icon rail (Overview / Agents / Tasks / Activity / Settings), a top bar with live metrics (Agents, Active, Pending, Completed) and simulation controls (start/pause, speed 0.5x to 4x, mute, reset, Run demo, Load sprint, New task), and a side panel:
 
 - **Overview** - callout with the demo buttons, agent roster, in-flight task cards, latest activity.
@@ -141,6 +144,8 @@ Keyboard (ignored while typing in inputs or with the dialog open):
 | `Esc` | clear selection, stop following |
 
 Mouse: click an agent or a station to select it (the camera focuses, details open in the panel); drag to orbit, scroll to zoom; hover highlights. Camera presets in the bottom bar cover Overview, Operations Hub, Research, Development and Collaboration. Selecting an agent offers a follow mode that tracks them with a damped camera until you press `Esc` or drag.
+
+In 2D mode the same mouse and touch gestures drive the plan: drag to pan, wheel or pinch to zoom at the cursor, click to select, and any drag releases follow mode. The presets zoom to the matching zone of the plan.
 
 The orbit camera is clamped so you can never leave the office (target locked to the floor area, distance 3.5 to 70 m, polar 0.18 to 1.36 rad), and preset distances scale against whatever screen area the floating UI leaves free, so the same part of the office stays visible on a narrow window or a phone.
 
@@ -221,6 +226,7 @@ Budget: hold 60 fps on a 2020 laptop. The main levers:
 - Shared geometry and material pools (`sharedGeometry` / `sharedMaterial`, per-colour accent pools), `InstancedMesh` for the skyline, path discs, comm packets and planning-board sticky cards.
 - No post-processing; ACESFilmic tone mapping; DPR capped per quality path.
 - `PerformanceMonitor` with 2 flip-flops; on fallback the store switches to the `low` path (kept until reload; a forced `?quality=` is never overridden).
+- The 2D map stops the Canvas frame loop once the loading screen has rendered. Its own `requestAnimationFrame` loop only exists while 2D is visible, the static plan is painted on a separate canvas and only repainted when the camera, size or insets change, and agent positions never touch React. With no WebGL frames, `PerformanceMonitor` goes quiet in 2D and cannot trigger a false quality fallback.
 - Mobile: the nav rail collapses to a bottom bar, the side panel becomes a bottom sheet, and quality starts low.
 - `prefers-reduced-motion` disables pulse and bubble animations and freezes agent animation weights.
 
@@ -321,6 +327,8 @@ In websocket mode a working or thinking core agent also shows a speech bubble wi
 The bridge never stores or forwards prompts, tool responses, transcript paths or full assistant messages. Activity text is limited to the tool name, a file path relative to the hook `cwd`, the first 60 characters of a masked Bash command, an `Agent`/`Task` description, or a 120 character truncated summary. `redact()` masks `Authorization`/`Bearer` values, `token`, `password` and `api_key` assignments, `sk-` keys, GitHub tokens and AWS access key shapes. Hook requests with an `Origin` header, a non-JSON content type, a body over 256 KiB or malformed fields are rejected; the server binds loopback only and caps hook calls at 200 per second.
 
 ## Testing
+
+Browser checks that read the debug probes (`__AAW_RENDER_STATS__`, `__AAW_DRAW_CALLS__`, `__AAW_LABEL_ANCHORS__`, `__AAW_DEBUG_STATE__`, `__AAW_SIDE_PANEL_RENDERS__`) must run in 3D mode, either by keeping the default view or by passing `?view=3d`. Those probes are published by the 3D frame loop, which stops while the 2D map is visible.
 
 `npm test` runs `scripts/simulate.ts` - the simulation engine imported directly into Node, no browser, no mocking of the DOM. It prints one check per line and exits non-zero on any failure:
 

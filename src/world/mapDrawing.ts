@@ -4,6 +4,8 @@
  * layer (phase 3) takes the mutable world snapshot. No DOM reads.
  */
 import { getAgentProfile } from "@/agents/AgentRegistry";
+import type { AgentId, AgentState, AgentStatus } from "@/agents/agentTypes";
+import type { CommLink } from "@/integrations/AgentBackend";
 import {
   BAY_DESKS,
   BAY_DESK_DEPTH,
@@ -27,6 +29,7 @@ import {
   mapPoint,
   type MapCamera,
   type MapViewport,
+  type ScreenPoint,
 } from "./mapView";
 
 export interface MapColors {
@@ -77,6 +80,10 @@ interface Rect {
   y: number;
   width: number;
   height: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 const STATION_SHORT: Record<StationId, string> = {
@@ -870,4 +877,563 @@ export function drawStaticLayer(
   drawBoards(ctx, camera, viewport, theme);
   drawCollaboration(ctx, camera, viewport, theme);
   drawDispatch(ctx, camera, viewport, theme);
+}
+
+// ---------------------------------------------------------------------------
+// Live layer: agents, trails, comm links and the working-state paints.
+// Every function here reads a per-frame snapshot supplied by the caller; the
+// only state the component keeps is the damped pose and the animation phases.
+// ---------------------------------------------------------------------------
+
+const TAU = Math.PI * 2;
+const TRAIL_SPACING = 0.32;
+const TRAIL_MAX_DOTS = 64;
+const PACKETS_PER_LINK = 3;
+const PACKET_STAGGER = 0.16;
+const PACKET_TRAVEL = 1 - (PACKETS_PER_LINK - 1) * PACKET_STAGGER;
+const LINK_CAP = 4;
+const PULSE_SECONDS = 0.9;
+const HUB_PULSE_SECONDS = 2.4;
+
+/** How strongly the floor status ring reads for each status. */
+const STATUS_WEIGHT: Record<AgentStatus, number> = {
+  idle: 0.18,
+  walking: 0.3,
+  thinking: 0.45,
+  communicating: 0.6,
+  working: 0.75,
+  success: 0.6,
+  error: 0.6,
+};
+
+export interface MapAgentPose {
+  x: number;
+  z: number;
+  heading: number;
+}
+
+export interface MapAgentMarkerOptions {
+  selected: boolean;
+  hovered: boolean;
+  followed: boolean;
+  /** Seconds since the agent entered success or error, or null. */
+  pulseAge: number | null;
+  pulseOutcome: "success" | "error" | null;
+  reducedMotion: boolean;
+}
+
+function screenRadius(camera: MapCamera, metres: number, minimum: number): number {
+  return Math.max(minimum, camera.scale * metres);
+}
+
+/** Strip "Name is ..." so the pill says the activity, not the name twice. */
+function displayActivity(name: string, activity: string | undefined): string {
+  if (!activity) return "Idle";
+  let text = activity;
+  if (text.startsWith(`${name} is `)) {
+    text = text.slice(name.length + 4);
+  } else if (text.startsWith(`${name} `)) {
+    text = text.slice(name.length + 1);
+  }
+  if (text.length === 0) return activity;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+function truncate(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let end = text.length;
+  while (end > 1 && ctx.measureText(`${text.slice(0, end)}...`).width > maxWidth) {
+    end -= 1;
+  }
+  return `${text.slice(0, end)}...`;
+}
+
+/**
+ * One robot: floor status ring, selection/hover ring, outcome pulse, the
+ * profile-coloured disc, the heading notch and the initials.
+ */
+export function drawAgentMarker(
+  ctx: CanvasRenderingContext2D,
+  camera: MapCamera,
+  viewport: MapViewport,
+  theme: MapTheme,
+  agent: AgentState,
+  pose: MapAgentPose,
+  options: MapAgentMarkerOptions,
+): void {
+  const colors = theme.colors;
+  const profile = getAgentProfile(agent.id);
+  const point = mapPoint(camera, viewport, pose.x, pose.z);
+  const radius = screenRadius(camera, 0.38, 6);
+
+  // The expanding pulse sits under the disc so it never covers the initials.
+  if (
+    options.pulseAge !== null &&
+    options.pulseAge < PULSE_SECONDS &&
+    options.pulseOutcome !== null
+  ) {
+    const progress = options.reducedMotion
+      ? 0.45
+      : options.pulseAge / PULSE_SECONDS;
+    const outcomeColor =
+      options.pulseOutcome === "success" ? colors.ok : colors.warn;
+    const ring = radius + 3 + progress * camera.scale * 0.9;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, ring, 0, TAU);
+    ctx.strokeStyle = alpha(outcomeColor, (1 - progress) * 0.8);
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  if (!agent.paused) {
+    const weight = STATUS_WEIGHT[agent.status];
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, radius + screenRadius(camera, 0.14, 3), 0, TAU);
+    ctx.strokeStyle = alpha(profile.color, 0.12 + weight * 0.55);
+    ctx.lineWidth = screenRadius(camera, 0.045, 1.5);
+    ctx.stroke();
+  }
+
+  if (options.selected || options.hovered || options.followed) {
+    ctx.beginPath();
+    ctx.arc(
+      point.x,
+      point.y,
+      radius + screenRadius(camera, 0.2, 5),
+      0,
+      TAU,
+    );
+    ctx.strokeStyle = alpha(colors.mist100, options.selected ? 0.95 : 0.7);
+    ctx.lineWidth = options.selected ? 2 : 1.4;
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = agent.paused ? 0.5 : 1;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, TAU);
+  ctx.fillStyle = profile.color;
+  ctx.fill();
+  ctx.strokeStyle = colors.ink950;
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // Heading notch: a dark edge mark from the outer half of the disc. It starts
+  // past the initials so the mark never cuts through the letters.
+  const headingX = Math.sin(pose.heading);
+  const headingZ = Math.cos(pose.heading);
+  ctx.beginPath();
+  ctx.moveTo(
+    point.x + headingX * radius * 0.52,
+    point.y + headingZ * radius * 0.52,
+  );
+  ctx.lineTo(
+    point.x + headingX * radius * 0.86,
+    point.y + headingZ * radius * 0.86,
+  );
+  ctx.strokeStyle = alpha(colors.ink950, 0.85);
+  ctx.lineWidth = Math.max(1.5, radius * 0.2);
+  ctx.lineCap = "round";
+  ctx.stroke();
+  ctx.lineCap = "butt";
+
+  const labelSize = clamp(camera.scale * 0.24, 7, 10);
+  setFont(ctx, labelSize, 700, theme.fontMono);
+  ctx.fillStyle = colors.ink950;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(initialsForProfile(profile.name), point.x, point.y + 0.5);
+  ctx.globalAlpha = 1;
+}
+
+function initialsForProfile(name: string): string {
+  const words = name.split(/[\s-_]+/).filter((word) => word.length > 0);
+  if (words.length >= 2) {
+    return `${words[0].charAt(0)}${words[1].charAt(0)}`.toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+interface LabelBox {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  point: ScreenPoint;
+  radius: number;
+}
+
+function labelBox(
+  camera: MapCamera,
+  viewport: MapViewport,
+  pose: MapAgentPose,
+  width: number,
+  height: number,
+): LabelBox {
+  const point = mapPoint(camera, viewport, pose.x, pose.z);
+  const radius = screenRadius(camera, 0.38, 6);
+  const free = mapFreeArea(viewport);
+  const x = clamp(
+    point.x - width / 2,
+    free.left + 6,
+    free.left + free.width - width - 6,
+  );
+  let y = point.y - radius - 8 - height;
+  if (y < free.top + 6) y = point.y + radius + 8;
+  return { x, y, width, height, point, radius };
+}
+
+/** Full name plus activity: hover, selection and follow only. */
+export function drawAgentDetailLabel(
+  ctx: CanvasRenderingContext2D,
+  camera: MapCamera,
+  viewport: MapViewport,
+  theme: MapTheme,
+  agent: AgentState,
+  pose: MapAgentPose,
+): void {
+  const colors = theme.colors;
+  const profile = getAgentProfile(agent.id);
+  const name = profile.name;
+
+  const nameFont = `600 10.5px ${theme.fontSans}`;
+  const activityFont = `500 9.5px ${theme.fontSans}`;
+  setFont(ctx, 10.5, 600, theme.fontSans);
+  const nameWidth = ctx.measureText(name).width;
+  setFont(ctx, 9.5, 500, theme.fontSans);
+  const activity = agent.paused
+    ? "Paused"
+    : displayActivity(name, agent.activity);
+  const activityText = truncate(ctx, activity, 132);
+  const activityWidth = ctx.measureText(activityText).width;
+
+  const padding = 7;
+  const gap = 5;
+  const dot = 5;
+  const width = Math.min(
+    250,
+    padding * 2 + dot + gap + nameWidth + gap + activityWidth,
+  );
+  const height = 18;
+  const box = labelBox(camera, viewport, pose, width, height);
+
+  fillRoundRect(
+    ctx,
+    { x: box.x, y: box.y, width, height },
+    height / 2,
+    alpha(colors.ink950, 0.92),
+  );
+  strokeRoundRect(
+    ctx,
+    { x: box.x, y: box.y, width, height },
+    height / 2,
+    alpha(profile.color, 0.55),
+    1,
+  );
+
+  let x = box.x + padding;
+  drawDisc(ctx, x + dot / 2, box.y + height / 2, dot / 2, profile.color);
+  x += dot + gap;
+  ctx.font = nameFont;
+  ctx.fillStyle = colors.mist100;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(name, x, box.y + height / 2 + 0.5);
+  x += nameWidth + gap;
+  ctx.font = activityFont;
+  ctx.fillStyle = colors.mist300;
+  ctx.fillText(activityText, x, box.y + height / 2 + 0.5);
+}
+
+/** Compact name tag for a communicating robot. */
+export function drawAgentNameTag(
+  ctx: CanvasRenderingContext2D,
+  camera: MapCamera,
+  viewport: MapViewport,
+  theme: MapTheme,
+  agent: AgentState,
+  pose: MapAgentPose,
+): void {
+  const colors = theme.colors;
+  const profile = getAgentProfile(agent.id);
+  const name = profile.name;
+  setFont(ctx, 9.5, 600, theme.fontSans);
+  const nameWidth = ctx.measureText(name).width;
+  const padding = 6;
+  const gap = 4;
+  const dot = 4;
+  const width = padding * 2 + dot + gap + nameWidth;
+  const height = 16;
+  const box = labelBox(camera, viewport, pose, width, height);
+
+  fillRoundRect(
+    ctx,
+    { x: box.x, y: box.y, width, height },
+    height / 2,
+    alpha(colors.ink950, 0.82),
+  );
+  strokeRoundRect(
+    ctx,
+    { x: box.x, y: box.y, width, height },
+    height / 2,
+    alpha(profile.color, 0.42),
+    1,
+  );
+  drawDisc(
+    ctx,
+    box.x + padding + dot / 2,
+    box.y + height / 2,
+    dot / 2,
+    profile.color,
+  );
+  ctx.font = `600 9.5px ${theme.fontSans}`;
+  ctx.fillStyle = colors.mist300;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(
+    name,
+    box.x + padding + dot + gap,
+    box.y + height / 2 + 0.5,
+  );
+}
+
+/** Dotted remaining path plus the destination ring, matching the 3D trail. */
+export function drawAgentTrail(
+  ctx: CanvasRenderingContext2D,
+  camera: MapCamera,
+  viewport: MapViewport,
+  theme: MapTheme,
+  agent: AgentState,
+  pose: MapAgentPose,
+  phase: number,
+  reducedMotion: boolean,
+): void {
+  const path = agent.path;
+  if (path.length === 0) return;
+  const colors = theme.colors;
+  const profile = getAgentProfile(agent.id);
+
+  let segmentIndex = 0;
+  let segmentStartX = pose.x;
+  let segmentStartZ = pose.z;
+  let segmentEndX = path[0].x;
+  let segmentEndZ = path[0].z;
+  let segmentLength = Math.hypot(
+    segmentEndX - segmentStartX,
+    segmentEndZ - segmentStartZ,
+  );
+  let travelled = 0;
+
+  // One path, one fill: dozens of tiny dots are cheaper as subpaths than as
+  // separate fills, and the fade still reads from the shrinking radius.
+  ctx.beginPath();
+  let placed = 0;
+  for (let index = 0; index < TRAIL_MAX_DOTS; index += 1) {
+    const target = phase + index * TRAIL_SPACING;
+    while (
+      target > travelled + segmentLength &&
+      segmentIndex < path.length - 1
+    ) {
+      travelled += segmentLength;
+      segmentIndex += 1;
+      segmentStartX = segmentEndX;
+      segmentStartZ = segmentEndZ;
+      segmentEndX = path[segmentIndex].x;
+      segmentEndZ = path[segmentIndex].z;
+      segmentLength = Math.hypot(
+        segmentEndX - segmentStartX,
+        segmentEndZ - segmentStartZ,
+      );
+    }
+    if (target > travelled + segmentLength) break;
+    const t = segmentLength > 1e-6 ? (target - travelled) / segmentLength : 0;
+    const x = segmentStartX + (segmentEndX - segmentStartX) * t;
+    const z = segmentStartZ + (segmentEndZ - segmentStartZ) * t;
+    const point = mapPoint(camera, viewport, x, z);
+    const radius =
+      screenRadius(camera, 0.05, 1) * (1 - (index / TRAIL_MAX_DOTS) * 0.4);
+    ctx.moveTo(point.x + radius, point.y);
+    ctx.arc(point.x, point.y, radius, 0, TAU);
+    placed += 1;
+  }
+  if (placed > 0) {
+    ctx.fillStyle = alpha(profile.color, 0.55);
+    ctx.fill();
+  }
+
+  const last = path[path.length - 1];
+  if (last === undefined) return;
+  const destination = mapPoint(camera, viewport, last.x, last.z);
+  const breath = reducedMotion
+    ? 1
+    : 1 + Math.sin((phase / TRAIL_SPACING) * TAU) * 0.08;
+  ctx.beginPath();
+  ctx.arc(destination.x, destination.y, camera.scale * 0.36 * breath, 0, TAU);
+  ctx.strokeStyle = alpha(colors.mist100, 0.28);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(destination.x, destination.y, camera.scale * 0.36 * breath, 0, TAU);
+  ctx.strokeStyle = alpha(profile.color, 0.72);
+  ctx.lineWidth = 1.2;
+  ctx.stroke();
+}
+
+function quadraticPoint(
+  start: ScreenPoint,
+  control: ScreenPoint,
+  end: ScreenPoint,
+  t: number,
+): ScreenPoint {
+  const inverse = 1 - t;
+  return {
+    x: inverse * inverse * start.x + 2 * inverse * t * control.x + t * t * end.x,
+    y: inverse * inverse * start.y + 2 * inverse * t * control.y + t * t * end.y,
+  };
+}
+
+/** Glowing arcs with travelling packets for every active communication. */
+export function drawCommLinks(
+  ctx: CanvasRenderingContext2D,
+  camera: MapCamera,
+  viewport: MapViewport,
+  links: readonly CommLink[],
+  poses: ReadonlyMap<AgentId, MapAgentPose>,
+  clock: number,
+  reducedMotion: boolean,
+): void {
+  const active: CommLink[] = [];
+  for (const link of links) {
+    if (clock >= link.startedAt && clock < link.endsAt) active.push(link);
+  }
+  if (active.length === 0) return;
+  active.sort((left, right) => right.startedAt - left.startedAt);
+
+  for (const link of active.slice(0, LINK_CAP)) {
+    const from = poses.get(link.from);
+    const to = poses.get(link.to);
+    if (!from || !to) continue;
+    const start = mapPoint(camera, viewport, from.x, from.z);
+    const end = mapPoint(camera, viewport, to.x, to.z);
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 2) continue;
+
+    // A perpendicular dip instead of the 3D arc's lift, so a message between
+    // two robots never hides behind their discs.
+    const dip = clamp(length * 0.18, 8, 90);
+    const control = {
+      x: (start.x + end.x) / 2 - (dy / length) * dip,
+      y: (start.y + end.y) / 2 + (dx / length) * dip,
+    };
+    const color = getAgentProfile(link.from).color;
+    const duration = Math.max(0.001, link.endsAt - link.startedAt);
+    const progress = clamp((clock - link.startedAt) / duration, 0, 1);
+
+    // A wide, faint stroke behind the line reads as a glow without the cost
+    // of canvas shadows, which are the most expensive op in this loop.
+    ctx.strokeStyle = alpha(color, 0.16);
+    ctx.lineWidth = link.kind === "assign" ? 7 : 5;
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.quadraticCurveTo(control.x, control.y, end.x, end.y);
+    ctx.stroke();
+    ctx.strokeStyle = alpha(color, 0.78);
+    ctx.lineWidth = link.kind === "assign" ? 2.4 : 1.6;
+    ctx.stroke();
+
+    const packetRadius = screenRadius(camera, link.kind === "assign" ? 0.09 : 0.07, 2.2);
+    if (reducedMotion) {
+      const point = quadraticPoint(start, control, end, 0.5);
+      drawDisc(ctx, point.x, point.y, packetRadius, color);
+      continue;
+    }
+    for (let packet = 0; packet < PACKETS_PER_LINK; packet += 1) {
+      const t = (progress - packet * PACKET_STAGGER) / PACKET_TRAVEL;
+      if (t < 0 || t > 1) continue;
+      const point = quadraticPoint(start, control, end, t);
+      drawDisc(ctx, point.x, point.y, packetRadius * 1.9, alpha(color, 0.22));
+      drawDisc(ctx, point.x, point.y, packetRadius, alpha(color, 0.98));
+    }
+  }
+}
+
+/** Screen tint and floor pool for every desk whose owner is working. */
+export function drawWorkingDesks(
+  ctx: CanvasRenderingContext2D,
+  camera: MapCamera,
+  viewport: MapViewport,
+  agents: readonly AgentState[],
+): void {
+  for (const station of STATIONS) {
+    const ownerId = STATION_OWNERS[station.id];
+    const owner = agents.find((agent) => agent.id === ownerId);
+    if (!owner || owner.paused || owner.status !== "working") continue;
+    const profile = getAgentProfile(ownerId);
+    const pool = mapPoint(
+      camera,
+      viewport,
+      station.position.x,
+      station.position.z + 0.45,
+    );
+    const radius = camera.scale * 1.5;
+    const glow = ctx.createRadialGradient(
+      pool.x,
+      pool.y,
+      0,
+      pool.x,
+      pool.y,
+      radius,
+    );
+    glow.addColorStop(0, alpha(profile.color, 0.26));
+    glow.addColorStop(1, alpha(profile.color, 0));
+    ctx.fillStyle = glow;
+    ctx.fillRect(pool.x - radius, pool.y - radius, radius * 2, radius * 2);
+
+    const strip = worldRect(
+      camera,
+      viewport,
+      station.position.x - 1.24,
+      station.position.z + 0.46,
+      2.48,
+      0.16,
+    );
+    ctx.fillStyle = alpha(profile.color, 0.22);
+    ctx.fillRect(
+      strip.x - 2,
+      strip.y - 3,
+      strip.width + 4,
+      strip.height + 6,
+    );
+    ctx.fillStyle = alpha(profile.color, 0.92);
+    ctx.fillRect(strip.x, strip.y, strip.width, strip.height);
+  }
+}
+
+/** The hub ring breathes while Orion works, like the 3D console. */
+export function drawHubPulse(
+  ctx: CanvasRenderingContext2D,
+  camera: MapCamera,
+  viewport: MapViewport,
+  theme: MapTheme,
+  clock: number,
+  active: boolean,
+  reducedMotion: boolean,
+): void {
+  if (!active) return;
+  const point = mapPoint(camera, viewport, HUB_CENTER.x, HUB_CENTER.z);
+  const base = camera.scale * 1.35;
+  const progress = reducedMotion
+    ? 0.5
+    : (clock % HUB_PULSE_SECONDS) / HUB_PULSE_SECONDS;
+  const radius = base + progress * camera.scale * 0.9;
+  ctx.beginPath();
+  ctx.arc(point.x, point.y, radius, 0, TAU);
+  ctx.strokeStyle = alpha(theme.colors.signal, (1 - progress) * 0.6);
+  ctx.lineWidth = 1.6;
+  ctx.stroke();
 }

@@ -2,8 +2,9 @@
 
 import { useEffect, useRef } from "react";
 import type { PointerEvent as ReactPointerEvent } from "react";
-import type { AgentId } from "@/agents/agentTypes";
-import { getAgentProfile } from "@/agents/AgentRegistry";
+import type { AgentId, AgentStatus } from "@/agents/agentTypes";
+import type { WorldSnapshot } from "@/integrations/AgentBackend";
+import { hashString } from "@/simulation/EventBus";
 import { liveWorld, useWorldStore } from "@/state/useWorldStore";
 import type { CameraRequest, ViewInsets } from "@/state/useWorldStore";
 import { reducedMotion } from "@/state/reducedMotion";
@@ -17,7 +18,6 @@ import {
   hitStationAt,
   mapFitScale,
   mapFreeArea,
-  mapPoint,
   mapWorld,
   mapZoneCamera,
   overviewMapCamera,
@@ -27,8 +27,16 @@ import {
   type MapViewport,
 } from "./mapView";
 import {
+  drawAgentDetailLabel,
+  drawAgentMarker,
+  drawAgentNameTag,
+  drawAgentTrail,
+  drawCommLinks,
+  drawHubPulse,
   drawStaticLayer,
+  drawWorkingDesks,
   FALLBACK_MAP_THEME,
+  type MapAgentPose,
   type MapTheme,
 } from "./mapDrawing";
 
@@ -97,13 +105,17 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-/** Two-letter mark for a robot: core names fit one, live names take two. */
-function initialsFor(name: string): string {
-  const words = name.split(/[\s-_]+/).filter((word) => word.length > 0);
-  if (words.length >= 2) {
-    return `${words[0].charAt(0)}${words[1].charAt(0)}`.toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
+/** Shortest-path angular damping, so a turn never spins the long way round. */
+function dampAngle(current: number, target: number, t: number): number {
+  let difference = target - current;
+  while (difference > Math.PI) difference -= Math.PI * 2;
+  while (difference < -Math.PI) difference += Math.PI * 2;
+  return current + difference * t;
+}
+
+interface PulseState {
+  startedAt: number;
+  outcome: "success" | "error";
 }
 
 /**
@@ -117,14 +129,18 @@ export function FloorPlan2D() {
 
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const sizeRef = useRef<CanvasSize>({ width: 0, height: 0, dpr: 1 });
   const cameraRef = useRef<MapCamera>({ cx: 0, cz: 1, scale: 1 });
   const goalRef = useRef<MapCamera | null>(null);
   const initialisedRef = useRef(false);
   const themeRef = useRef<MapTheme>(FALLBACK_MAP_THEME);
-  const staticCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const staticKeyRef = useRef("");
   const agentPointsRef = useRef(new Map<AgentId, { id: AgentId; x: number; z: number }>());
+  const posesRef = useRef(new Map<AgentId, MapAgentPose>());
+  const trailPhaseRef = useRef(new Map<AgentId, number>());
+  const pulseRef = useRef(new Map<AgentId, PulseState>());
+  const lastStatusRef = useRef(new Map<AgentId, AgentStatus>());
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const dragRef = useRef<Pointers | null>(null);
   const pinchRef = useRef<Pinch | null>(null);
@@ -143,7 +159,8 @@ export function FloorPlan2D() {
   useEffect(() => {
     const wrapper = wrapperRef.current;
     const canvas = canvasRef.current;
-    if (!wrapper || !canvas) return;
+    const staticCanvas = staticCanvasRef.current;
+    if (!wrapper || !canvas || !staticCanvas) return;
 
     themeRef.current = readMapTheme();
 
@@ -160,10 +177,12 @@ export function FloorPlan2D() {
         return;
       }
       sizeRef.current = { width, height, dpr };
-      canvas.width = Math.round(width * dpr);
-      canvas.height = Math.round(height * dpr);
-      canvas.style.width = `${width}px`;
-      canvas.style.height = `${height}px`;
+      for (const layer of [canvas, staticCanvas]) {
+        layer.width = Math.round(width * dpr);
+        layer.height = Math.round(height * dpr);
+        layer.style.width = `${width}px`;
+        layer.style.height = `${height}px`;
+      }
 
       const viewport = viewportFor(sizeRef.current, useWorldStore.getState().viewInsets);
       cameraRef.current = initialisedRef.current
@@ -272,18 +291,8 @@ export function FloorPlan2D() {
         `${size.width}x${size.height}@${size.dpr}:` +
         `${insets.top},${insets.right},${insets.bottom},${insets.left}:` +
         `${camera.cx.toFixed(3)},${camera.cz.toFixed(3)},${camera.scale.toFixed(2)}`;
-      let layer = staticCanvasRef.current;
-      if (
-        layer === null ||
-        layer.width !== Math.round(size.width * size.dpr) ||
-        layer.height !== Math.round(size.height * size.dpr)
-      ) {
-        layer = document.createElement("canvas");
-        layer.width = Math.round(size.width * size.dpr);
-        layer.height = Math.round(size.height * size.dpr);
-        staticCanvasRef.current = layer;
-        staticKeyRef.current = "";
-      }
+      const layer = staticCanvasRef.current;
+      if (layer === null) return null;
       if (key === staticKeyRef.current) return layer;
       const context = layer.getContext("2d");
       if (!context) return layer;
@@ -293,56 +302,89 @@ export function FloorPlan2D() {
       return layer;
     };
 
-    const drawAgents = (
-      context: CanvasRenderingContext2D,
-      camera: MapCamera,
-      viewport: MapViewport,
-      theme: MapTheme,
+    /**
+     * Damp the drawn pose towards the snapshot (lambda 12, same as the 3D
+     * animator), snap teleports and reduced-motion users, start outcome
+     * pulses and advance the trail phase only while the simulation runs.
+     */
+    const syncAgents = (
+      snapshot: WorldSnapshot,
+      delta: number,
+      calm: boolean,
+      nowMs: number,
     ): void => {
-      const store = useWorldStore.getState();
-      const snapshot = liveWorld.current;
+      const poses = posesRef.current;
       const points = agentPointsRef.current;
-      points.clear();
-      if (!snapshot) return;
+      const present = new Set<AgentId>();
 
       for (const agent of snapshot.agents) {
-        points.set(agent.id, {
-          id: agent.id,
-          x: agent.position.x,
-          z: agent.position.z,
-        });
-        const profile = getAgentProfile(agent.id);
-        const point = mapPoint(camera, viewport, agent.position.x, agent.position.z);
-        const radius = Math.max(6, camera.scale * 0.4);
-        const active =
-          store.selectedAgentId === agent.id ||
-          store.hovered === `agent:${agent.id}` ||
-          store.followAgentId === agent.id;
-
-        if (active) {
-          context.beginPath();
-          context.arc(point.x, point.y, radius + 4, 0, Math.PI * 2);
-          context.strokeStyle = theme.colors.mist100;
-          context.lineWidth = 1.5;
-          context.stroke();
+        present.add(agent.id);
+        let pose = poses.get(agent.id);
+        const teleported =
+          pose !== undefined &&
+          Math.hypot(agent.position.x - pose.x, agent.position.z - pose.z) > 4;
+        if (pose === undefined) {
+          pose = {
+            x: agent.position.x,
+            z: agent.position.z,
+            heading: agent.heading,
+          };
+          poses.set(agent.id, pose);
+        } else if (calm || teleported) {
+          pose.x = agent.position.x;
+          pose.z = agent.position.z;
+          pose.heading = agent.heading;
+        } else {
+          const positionStep = 1 - Math.exp(-12 * delta);
+          pose.x += (agent.position.x - pose.x) * positionStep;
+          pose.z += (agent.position.z - pose.z) * positionStep;
+          pose.heading = dampAngle(
+            pose.heading,
+            agent.heading,
+            1 - Math.exp(-9 * delta),
+          );
         }
+        points.set(agent.id, { id: agent.id, x: pose.x, z: pose.z });
 
-        context.beginPath();
-        context.arc(point.x, point.y, radius, 0, Math.PI * 2);
-        context.fillStyle = agent.paused
-          ? `${profile.color}66`
-          : profile.color;
-        context.fill();
-        context.strokeStyle = theme.colors.ink950;
-        context.lineWidth = 1.5;
-        context.stroke();
+        const previousStatus = lastStatusRef.current.get(agent.id);
+        if (
+          previousStatus !== agent.status &&
+          (agent.status === "success" || agent.status === "error")
+        ) {
+          pulseRef.current.set(agent.id, {
+            startedAt: nowMs,
+            outcome: agent.status,
+          });
+        }
+        lastStatusRef.current.set(agent.id, agent.status);
 
-        const labelSize = clamp(camera.scale * 0.26, 7, 10);
-        context.font = `700 ${labelSize}px ${theme.fontMono}`;
-        context.fillStyle = theme.colors.ink950;
-        context.textAlign = "center";
-        context.textBaseline = "middle";
-        context.fillText(initialsFor(profile.name), point.x, point.y + 0.5);
+        let phase = trailPhaseRef.current.get(agent.id);
+        if (phase === undefined) {
+          // A deterministic offset per id keeps same-role live agents from
+          // marching in lockstep.
+          phase = (hashString(agent.id) * 0.137) % 0.32;
+        }
+        if (snapshot.status === "running" && !calm && agent.path.length > 0) {
+          phase = (phase + delta * (snapshot.speed || 1) * 0.55) % 0.32;
+        }
+        trailPhaseRef.current.set(agent.id, phase);
+      }
+
+      // A despawned live agent must not leave a pose or a pulse behind.
+      for (const id of poses.keys()) {
+        if (!present.has(id)) poses.delete(id);
+      }
+      for (const id of points.keys()) {
+        if (!present.has(id)) points.delete(id);
+      }
+      for (const id of lastStatusRef.current.keys()) {
+        if (!present.has(id)) lastStatusRef.current.delete(id);
+      }
+      for (const id of pulseRef.current.keys()) {
+        if (!present.has(id)) pulseRef.current.delete(id);
+      }
+      for (const id of trailPhaseRef.current.keys()) {
+        if (!present.has(id)) trailPhaseRef.current.delete(id);
       }
     };
 
@@ -383,10 +425,13 @@ export function FloorPlan2D() {
           (agent) => agent.id === store.followAgentId,
         );
         if (followed) {
+          // Prefer the damped drawn pose (last frame's) so the camera tracks
+          // what the user sees, exactly as the 3D follow branch does.
+          const pose = posesRef.current.get(followed.id);
           goalRef.current = clampMapCamera(
             {
-              cx: followed.position.x,
-              cz: followed.position.z,
+              cx: pose?.x ?? followed.position.x,
+              cz: pose?.z ?? followed.position.z,
               scale: cameraRef.current.scale,
             },
             viewport,
@@ -399,15 +444,116 @@ export function FloorPlan2D() {
       stepCamera(delta, viewport);
 
       const theme = themeRef.current;
-      const staticLayer = ensureStatic(theme, viewport);
+      // The static plan lives on its own visible canvas behind this one, so
+      // pan/zoom only repaints it when the camera actually changes and the
+      // per-frame loop just clears the transparent live layer.
+      ensureStatic(theme, viewport);
       const context = canvas.getContext("2d");
       if (!context) return;
       context.setTransform(size.dpr, 0, 0, size.dpr, 0, 0);
       context.clearRect(0, 0, size.width, size.height);
-      if (staticLayer !== null) {
-        context.drawImage(staticLayer, 0, 0, size.width, size.height);
+
+      const snapshot = liveWorld.current;
+      if (snapshot !== null) {
+        const camera = cameraRef.current;
+        const poses = posesRef.current;
+        const calm = reducedMotion.current;
+
+        syncAgents(snapshot, delta, calm, now);
+
+        drawWorkingDesks(context, camera, viewport, snapshot.agents);
+
+        if (store.overlays.walkingPaths) {
+          for (const agent of snapshot.agents) {
+            const pose = poses.get(agent.id);
+            if (pose === undefined) continue;
+            drawAgentTrail(
+              context,
+              camera,
+              viewport,
+              theme,
+              agent,
+              pose,
+              trailPhaseRef.current.get(agent.id) ?? 0,
+              calm,
+            );
+          }
+        }
+
+        if (store.overlays.speechIndicators) {
+          drawCommLinks(
+            context,
+            camera,
+            viewport,
+            snapshot.links,
+            poses,
+            snapshot.clock,
+            calm,
+          );
+        }
+
+        const orion = snapshot.agents.find((agent) => agent.id === "orion");
+        drawHubPulse(
+          context,
+          camera,
+          viewport,
+          theme,
+          snapshot.clock,
+          snapshot.status === "running" &&
+            orion !== undefined &&
+            !orion.paused &&
+            orion.status !== "idle",
+          calm,
+        );
+
+        for (const agent of snapshot.agents) {
+          const pose = poses.get(agent.id);
+          if (pose === undefined) continue;
+          const pulse = pulseRef.current.get(agent.id);
+          drawAgentMarker(
+            context,
+            camera,
+            viewport,
+            theme,
+            agent,
+            pose,
+            {
+              selected: store.selectedAgentId === agent.id,
+              hovered: store.hovered === `agent:${agent.id}`,
+              followed: store.followAgentId === agent.id,
+              pulseAge:
+                pulse === undefined ? null : Math.max(0, (now - pulse.startedAt) / 1000),
+              pulseOutcome: pulse?.outcome ?? null,
+              reducedMotion: calm,
+            },
+          );
+        }
+
+        // Labels paint last so a pill is never covered by another robot.
+        for (const agent of snapshot.agents) {
+          const pose = poses.get(agent.id);
+          if (pose === undefined) continue;
+          const detail =
+            store.selectedAgentId === agent.id ||
+            store.hovered === `agent:${agent.id}` ||
+            store.followAgentId === agent.id;
+          if (detail) {
+            drawAgentDetailLabel(
+              context,
+              camera,
+              viewport,
+              theme,
+              agent,
+              pose,
+            );
+          } else if (
+            store.overlays.speechIndicators &&
+            agent.status === "communicating"
+          ) {
+            drawAgentNameTag(context, camera, viewport, theme, agent, pose);
+          }
+        }
       }
-      drawAgents(context, cameraRef.current, viewport, theme);
     };
 
     frame = requestAnimationFrame(draw);
@@ -611,6 +757,12 @@ export function FloorPlan2D() {
       data-testid="floor-plan-2d"
       data-visible={visible ? "1" : "0"}
     >
+      <canvas
+        ref={staticCanvasRef}
+        className="pointer-events-none absolute inset-0 block h-full w-full"
+        aria-hidden="true"
+        data-testid="floor-plan-static"
+      />
       <canvas
         ref={canvasRef}
         className="absolute inset-0 block h-full w-full select-none"
