@@ -53,6 +53,12 @@ Each role has its own rig (Orion a taller crown visor, Piper a tablet, Quinn twi
 
 **Sound.** Fully procedural Web Audio: per-agent message pings, keyboard clicks, submit whoosh, failure buzzer, pass and approve chimes, completion fanfare, blocked-task thud and a soft office hum. Mute is persisted.
 
+## Agent activity and communication
+
+![The Agents tab with Quinn's current task, activity history and communication history](docs/demo-agents.gif)
+
+The **Agents** tab shows what every robot is doing right now. Select one to see its current task and progress plus two histories: **Activity** (everything that agent did, including failures) and **Communication** (only the agent-to-agent messages). [Higher quality MP4](docs/demo-agents.mp4).
+
 ## Controls
 
 Keyboard (ignored while typing or with the dialog open):
