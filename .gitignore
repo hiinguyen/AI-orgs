@@ -6,3 +6,9 @@ next-env.d.ts
 .opencode-logs/
 .env*.local
 .DS_Store
+docs/briefs/
+docs/spec/
+docs/superpowers/
+.playwright-mcp/
+.mcp.json
+.claude/
